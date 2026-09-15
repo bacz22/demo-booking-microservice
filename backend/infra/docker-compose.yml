@@ -1,0 +1,162 @@
+name: cinebook-local
+
+services:
+  postgres-movie:
+    image: postgres:16-alpine
+    container_name: cinebook-postgres-movie
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: movie_db
+      POSTGRES_USER: cinebook
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_movie_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebook -d movie_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cinebook
+
+  postgres-theater:
+    image: postgres:16-alpine
+    container_name: cinebook-postgres-theater
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: theater_db
+      POSTGRES_USER: cinebook
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_theater_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebook -d theater_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cinebook
+
+  postgres-booking:
+    image: postgres:16-alpine
+    container_name: cinebook-postgres-booking
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: booking_db
+      POSTGRES_USER: cinebook
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_booking_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebook -d booking_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cinebook
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: cinebook-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - cinebook
+
+  kafka:
+    image: apache/kafka:3.9.2
+    container_name: cinebook-kafka
+    hostname: kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"
+    environment:
+      # Kafka chạy KRaft mode, không cần Zookeeper.
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:19092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    networks:
+      - cinebook
+
+  kafka-init:
+    image: apache/kafka:3.9.2
+    container_name: cinebook-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists
+        --topic booking.events --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists
+        --topic payment.events --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists
+        --topic showtime.events --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists
+        --topic notification.commands --partitions 3 --replication-factor 1;
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists
+        --topic booking.events.DLT --partitions 3 --replication-factor 1;
+        echo 'Kafka topics initialized.'
+    restart: "no"
+    networks:
+      - cinebook
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: cinebook-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: cinebook-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+      DYNAMIC_CONFIG_ENABLED: "true"
+    networks:
+      - cinebook
+
+volumes:
+  postgres_movie_data:
+  postgres_theater_data:
+  postgres_booking_data:
+  redis_data:
+
+networks:
+  cinebook:
+    driver: bridge

@@ -1,0 +1,185 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@custom-variant dark (&:is(.dark, .dark *));
+
+:root {
+  /* CineBook Light Theme Tokens */
+  --background: oklch(0.985 0.005 260); /* #F8FAFC Sạch sẽ, sáng sủa */
+  --foreground: oklch(0.15 0.015 260); /* #0F172A Chữ đậm tương phản cao */
+
+  --card: oklch(1 0 0); /* Nền card trắng tinh */
+  --card-foreground: oklch(0.15 0.015 260);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.015 260);
+
+  /* Primary: Crimson Cinema sắc nét trên nền sáng */
+  --primary: oklch(0.58 0.23 25); /* #E11D48 */
+  --primary-foreground: oklch(0.99 0 0);
+
+  /* Secondary: Xám khói nhạt cho nút phụ */
+  --secondary: oklch(0.94 0.01 260); /* #F1F5F9 */
+  --secondary-foreground: oklch(0.20 0.015 260);
+
+  /* Muted & Muted Foreground */
+  --muted: oklch(0.94 0.01 260);
+  --muted-foreground: oklch(0.48 0.02 260); /* #64748B */
+
+  /* Accent */
+  --accent: oklch(0.92 0.015 260);
+  --accent-foreground: oklch(0.15 0.015 260);
+
+  /* Semantic Feedback States */
+  --destructive: oklch(0.58 0.23 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.60 0.18 145);
+  --warning: oklch(0.70 0.16 75);
+  --accent-gold: oklch(0.75 0.16 75);
+
+  /* Borders & Inputs */
+  --border: oklch(0.88 0.01 260); /* Viền mờ nhẹ nhàng */
+  --input: oklch(0.88 0.01 260);
+  --ring: oklch(0.58 0.23 25);
+
+  --radius: 0.5rem;
+
+  /* Typography */
+  --font-sans: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-heading: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.dark {
+  /* CineBook Cinematic Dark-First Design Tokens */
+  --background: oklch(0.12 0.015 260); /* Deep obsidian #0B0D14 */
+  --foreground: oklch(0.96 0.005 260); /* Crisp off-white #F1F3F7 */
+
+  --card: oklch(0.16 0.015 260); /* Elevated dark slate #131722 */
+  --card-foreground: oklch(0.96 0.005 260);
+
+  --popover: oklch(0.16 0.015 260);
+  --popover-foreground: oklch(0.96 0.005 260);
+
+  /* Primary: Cinematic Crimson (#E11D48) */
+  --primary: oklch(0.62 0.22 25);
+  --primary-foreground: oklch(0.99 0 0);
+
+  /* Secondary: Deep charcoal surface */
+  --secondary: oklch(0.22 0.02 260);
+  --secondary-foreground: oklch(0.92 0.01 260);
+
+  /* Muted & Muted Foreground */
+  --muted: oklch(0.20 0.015 260);
+  --muted-foreground: oklch(0.65 0.02 260); /* #94A3B8 */
+
+  /* Accent */
+  --accent: oklch(0.24 0.02 260);
+  --accent-foreground: oklch(0.98 0 0);
+
+  /* Feedback States */
+  --destructive: oklch(0.58 0.23 27);
+  --destructive-foreground: oklch(0.99 0 0);
+  --success: oklch(0.65 0.18 145);
+  --warning: oklch(0.75 0.16 75);
+  --accent-gold: oklch(0.75 0.16 75);
+
+  /* Borders & Inputs */
+  --border: oklch(0.28 0.02 260 / 65%);
+  --input: oklch(0.28 0.02 260 / 55%);
+  --ring: oklch(0.62 0.22 25);
+}
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) * 0.75);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) * 1.25);
+  --radius-xl: calc(var(--radius) * 1.5);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-sans);
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--background);
+    color: var(--foreground);
+    overflow-x: hidden;
+    transition: background-color 0.2s ease, color 0.2s ease;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: oklch(0.4 0.02 260 / 40%);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(0.4 0.02 260 / 60%);
+  }
+
+  /* Focus rings */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: oklch(0.62 0.22 25 / 35%);
+    color: var(--foreground);
+  }
+}
+
+/* 7. Reduced Motion Support for Accessibility (WCAG 2.3.3) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
