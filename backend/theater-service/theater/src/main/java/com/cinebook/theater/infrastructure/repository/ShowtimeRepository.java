@@ -40,7 +40,9 @@ public interface ShowtimeRepository extends JpaRepository<Showtime, UUID>, JpaSp
           AND s.startTime >= :start
           AND s.startTime < :end
           AND (:theaterId IS NULL OR t.id = :theaterId)
-          AND (:city IS NULL OR t.city = :city)
+          AND (:city IS NULL OR LOWER(t.city) = :city)
+          AND t.status = 'ACTIVE'
+          AND a.status = 'ACTIVE'
           AND s.status IN ('SCHEDULED', 'SELLING')
         ORDER BY t.name ASC, a.name ASC, s.startTime ASC
     """)

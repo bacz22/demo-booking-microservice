@@ -5,11 +5,14 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import org.slf4j.MDC;
 
 import java.time.Duration;
 
 @Configuration
 public class RestClientConfig {
+
+    private static final String CORRELATION_ID_HEADER = "X-Correlation-Id";
 
     @Value("${cinebook.services.movie-service.base-url:http://localhost:8081}")
     private String movieServiceBaseUrl;
@@ -29,6 +32,13 @@ public class RestClientConfig {
         return RestClient.builder()
             .baseUrl(movieServiceBaseUrl)
             .requestFactory(requestFactory)
+            .requestInterceptor((request, body, execution) -> {
+                String correlationId = MDC.get("correlationId");
+                if (correlationId != null && !correlationId.isBlank()) {
+                    request.getHeaders().set(CORRELATION_ID_HEADER, correlationId);
+                }
+                return execution.execute(request, body);
+            })
             .build();
     }
 }

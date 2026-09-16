@@ -107,7 +107,8 @@ public class TheaterService {
             throw new TheaterInUseException(id, "Không thể xóa cụm rạp vì đang có suất chiếu trong tương lai");
         }
 
-        theaterRepository.delete(theater);
+        theater.setStatus(TheaterStatus.INACTIVE);
+        theaterRepository.save(theater);
     }
 
     public TheaterDetailResponse getTheaterById(UUID id) {

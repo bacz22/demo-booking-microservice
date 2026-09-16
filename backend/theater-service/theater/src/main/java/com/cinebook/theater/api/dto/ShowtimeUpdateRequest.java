@@ -1,6 +1,7 @@
 package com.cinebook.theater.api.dto;
 
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
 import java.math.BigDecimal;
@@ -10,6 +11,7 @@ public record ShowtimeUpdateRequest(
     @NotNull(message = "Thời gian bắt đầu không được để trống")
     Instant startTime,
 
+    @Min(value = 0, message = "Thời gian dọn phòng không được âm")
     Integer cleaningDurationMin,
 
     @DecimalMin(value = "0.0", message = "Giá vé Standard không được âm")

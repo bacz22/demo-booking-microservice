@@ -17,9 +17,12 @@ import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Instant;
 
@@ -95,8 +98,31 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", exception.getMessage(), request);
     }
 
+    @ExceptionHandler({
+        HttpMessageNotReadableException.class,
+        MethodArgumentTypeMismatchException.class,
+        MissingServletRequestParameterException.class
+    })
+    public ResponseEntity<ApiError> handleMalformedRequest(Exception exception, HttpServletRequest request) {
+        return build(
+            HttpStatus.BAD_REQUEST,
+            "INVALID_REQUEST",
+            "Request chứa giá trị không đúng định dạng hoặc không được hỗ trợ",
+            request
+        );
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiError> handleConflict(DataIntegrityViolationException exception, HttpServletRequest request) {
+        String causeMessage = exception.getMostSpecificCause().getMessage();
+        if (causeMessage != null && causeMessage.contains("ex_showtimes_auditorium_time_overlap")) {
+            return build(
+                HttpStatus.CONFLICT,
+                "SHOWTIME_OVERLAP",
+                "Phòng chiếu đã có suất chiếu khác trong khoảng thời gian này",
+                request
+            );
+        }
         return build(HttpStatus.CONFLICT, "DATA_INTEGRITY_VIOLATION", "Dữ liệu bị xung đột hoặc vi phạm ràng buộc toàn vẹn", request);
     }
 

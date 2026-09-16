@@ -73,7 +73,7 @@ public class Showtime {
         this.startTime = startTime;
         this.endTime = endTime;
         this.movieDurationMin = movieDurationMin;
-        this.cleaningDurationMin = cleaningDurationMin >= 0 ? cleaningDurationMin : 15;
+        setCleaningDurationMin(cleaningDurationMin);
         this.priceStandard = priceStandard != null ? priceStandard : new BigDecimal("90000");
         this.priceVip = priceVip != null ? priceVip : new BigDecimal("110000");
         this.priceCouple = priceCouple != null ? priceCouple : new BigDecimal("180000");
@@ -92,9 +92,7 @@ public class Showtime {
         if (this.status == null) {
             this.status = ShowtimeStatus.SCHEDULED;
         }
-        if (this.cleaningDurationMin < 0) {
-            this.cleaningDurationMin = 15;
-        }
+        validateCleaningDuration(this.cleaningDurationMin);
     }
 
     @PreUpdate
@@ -157,7 +155,14 @@ public class Showtime {
     }
 
     public void setCleaningDurationMin(int cleaningDurationMin) {
+        validateCleaningDuration(cleaningDurationMin);
         this.cleaningDurationMin = cleaningDurationMin;
+    }
+
+    private static void validateCleaningDuration(int cleaningDurationMin) {
+        if (cleaningDurationMin < 0) {
+            throw new IllegalArgumentException("Thời gian dọn phòng không được âm");
+        }
     }
 
     public BigDecimal getPriceStandard() {

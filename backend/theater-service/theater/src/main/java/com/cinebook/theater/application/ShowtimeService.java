@@ -17,6 +17,7 @@ import com.cinebook.theater.domain.model.Seat;
 import com.cinebook.theater.domain.model.Showtime;
 import com.cinebook.theater.domain.model.ShowtimeStatus;
 import com.cinebook.theater.domain.model.Theater;
+import com.cinebook.theater.domain.model.TheaterStatus;
 import com.cinebook.theater.infrastructure.client.MovieServiceClient;
 import com.cinebook.theater.infrastructure.client.dto.MovieSummaryResponse;
 import com.cinebook.theater.infrastructure.repository.AuditoriumRepository;
@@ -36,6 +37,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -73,6 +75,9 @@ public class ShowtimeService {
 
         if (auditorium.getStatus() != AuditoriumStatus.ACTIVE) {
             throw new IllegalArgumentException("Phòng chiếu đang không ở trạng thái hoạt động (ACTIVE)");
+        }
+        if (auditorium.getTheater().getStatus() != TheaterStatus.ACTIVE) {
+            throw new IllegalArgumentException("Cụm rạp đang không ở trạng thái hoạt động (ACTIVE)");
         }
 
         MovieSummaryResponse movie = movieServiceClient.validateAndGetMovie(request.movieId());
@@ -228,7 +233,9 @@ public class ShowtimeService {
         Instant startOfDay = targetDate.atStartOfDay(VIETNAM_ZONE).toInstant();
         Instant endOfDay = targetDate.plusDays(1).atStartOfDay(VIETNAM_ZONE).toInstant();
 
-        String cleanCity = (city != null && !city.isBlank()) ? city.trim() : null;
+        String cleanCity = (city != null && !city.isBlank())
+            ? city.trim().toLowerCase(Locale.ROOT)
+            : null;
 
         List<Showtime> showtimes = showtimeRepository.findActiveShowtimesForMovie(
             movieId,

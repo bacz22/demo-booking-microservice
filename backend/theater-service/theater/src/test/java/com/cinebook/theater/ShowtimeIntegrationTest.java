@@ -44,7 +44,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @Transactional
-class ShowtimeIntegrationTest {
+class ShowtimeIntegrationTest extends PostgresIntegrationTest {
 
     private MockMvc mockMvc;
 
@@ -325,6 +325,12 @@ class ShowtimeIntegrationTest {
             .andExpect(jsonPath("$[0].showtimes", hasSize(1)))
             .andExpect(jsonPath("$[0].showtimes[0].id", is(showtimeId.toString())))
             .andExpect(jsonPath("$[0].showtimes[0].status", is("SELLING")));
+
+        // Bộ lọc city không phân biệt hoa thường và không phát sinh lower(bytea)
+        mockMvc.perform(get("/api/movies/{movieId}/showtimes", movieId)
+                .param("city", auditorium.getTheater().getCity().toUpperCase()))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$", hasSize(1)));
 
         // 2. GET /api/showtimes/{id}/seats -> Sơ đồ ghế và bảng giá
         mockMvc.perform(get("/api/showtimes/{id}/seats", showtimeId))

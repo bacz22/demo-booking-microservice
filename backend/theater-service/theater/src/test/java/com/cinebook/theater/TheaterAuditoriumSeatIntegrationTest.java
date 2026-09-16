@@ -10,6 +10,7 @@ import com.cinebook.theater.domain.model.Auditorium;
 import com.cinebook.theater.domain.model.Showtime;
 import com.cinebook.theater.domain.model.ShowtimeStatus;
 import com.cinebook.theater.domain.model.Theater;
+import com.cinebook.theater.domain.model.TheaterStatus;
 import com.cinebook.theater.infrastructure.repository.AuditoriumRepository;
 import com.cinebook.theater.infrastructure.repository.SeatRepository;
 import com.cinebook.theater.infrastructure.repository.ShowtimeRepository;
@@ -41,7 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @Transactional
-class TheaterAuditoriumSeatIntegrationTest {
+class TheaterAuditoriumSeatIntegrationTest extends PostgresIntegrationTest {
 
     private MockMvc mockMvc;
 
@@ -261,6 +262,32 @@ class TheaterAuditoriumSeatIntegrationTest {
                 .content(seatGenJson))
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code", is("AUDITORIUM_IN_USE")));
+    }
+
+    @Test
+    @DisplayName("Xóa rạp không có lịch tương lai chỉ chuyển sang INACTIVE và giữ dữ liệu lịch sử")
+    void testDeleteTheaterPerformsSoftDelete() throws Exception {
+        Theater theater = new Theater(
+            "CineBook Soft Delete Test",
+            "1 Test Street",
+            "Da Nang",
+            null,
+            null,
+            null,
+            null,
+            TheaterStatus.ACTIVE
+        );
+        theater = theaterRepository.saveAndFlush(theater);
+
+        mockMvc.perform(delete("/api/admin/theaters/{id}", theater.getId()))
+            .andExpect(status().isNoContent());
+
+        Theater retained = theaterRepository.findById(theater.getId()).orElseThrow();
+        assertThat(retained.getStatus()).isEqualTo(TheaterStatus.INACTIVE);
+
+        mockMvc.perform(get("/api/theaters").param("city", "Da Nang"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$", hasSize(0)));
     }
 
     @Test

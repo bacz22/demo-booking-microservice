@@ -57,6 +57,16 @@ class ShowtimeScheduleValidatorTest {
     }
 
     @Test
+    @DisplayName("Không chấp nhận thời gian dọn phòng âm")
+    void testCalculateEndTimeRejectsNegativeCleaningDuration() {
+        Instant startTime = Instant.now();
+
+        assertThatThrownBy(() -> validator.calculateEndTime(startTime, 120, -1))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("không được âm");
+    }
+
+    @Test
     @DisplayName("Chặn tạo suất chiếu có thời gian bắt đầu trong quá khứ")
     void testValidateTimingRejectsPastStartTime() {
         Instant pastStart = Instant.now().minus(2, ChronoUnit.HOURS);

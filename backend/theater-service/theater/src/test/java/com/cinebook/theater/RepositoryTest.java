@@ -13,6 +13,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -22,10 +23,11 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
 @Transactional
-class RepositoryTest {
+class RepositoryTest extends PostgresIntegrationTest {
 
     @Autowired
     private TheaterRepository theaterRepository;
@@ -124,5 +126,43 @@ class RepositoryTest {
         showtimeRepository.saveAndFlush(existing);
         List<Showtime> overlapsH = showtimeRepository.findOverlappingShowtimes(auditoriumId, baseStart, baseEnd, null);
         assertThat(overlapsH).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Ràng buộc PostgreSQL chặn hai request đồng thời tạo suất chiếu trùng lịch")
+    void testDatabaseConstraintRejectsOverlappingShowtimes() {
+        Auditorium auditorium = auditoriumRepository.findAll().get(0);
+        Instant start = Instant.now().plus(3, ChronoUnit.DAYS).truncatedTo(ChronoUnit.HOURS);
+        Instant end = start.plus(120, ChronoUnit.MINUTES);
+
+        Showtime first = new Showtime(
+            auditorium,
+            UUID.randomUUID(),
+            start,
+            end,
+            105,
+            15,
+            new BigDecimal("90000"),
+            new BigDecimal("110000"),
+            new BigDecimal("180000"),
+            ShowtimeStatus.SCHEDULED
+        );
+        showtimeRepository.saveAndFlush(first);
+
+        Showtime overlapping = new Showtime(
+            auditorium,
+            UUID.randomUUID(),
+            start.plus(30, ChronoUnit.MINUTES),
+            end.plus(30, ChronoUnit.MINUTES),
+            105,
+            15,
+            new BigDecimal("90000"),
+            new BigDecimal("110000"),
+            new BigDecimal("180000"),
+            ShowtimeStatus.SCHEDULED
+        );
+
+        assertThatThrownBy(() -> showtimeRepository.saveAndFlush(overlapping))
+            .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

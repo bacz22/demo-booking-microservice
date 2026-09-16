@@ -1,6 +1,5 @@
 package com.cinebook.theater.domain.model;
 
-import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -46,10 +45,10 @@ public class Auditorium {
     @Column(nullable = false, length = 30)
     private AuditoriumStatus status = AuditoriumStatus.ACTIVE;
 
-    @OneToMany(mappedBy = "auditorium", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "auditorium", fetch = FetchType.LAZY)
     private List<Seat> seats = new ArrayList<>();
 
-    @OneToMany(mappedBy = "auditorium", cascade = CascadeType.ALL, orphanRemoval = true, fetch = FetchType.LAZY)
+    @OneToMany(mappedBy = "auditorium", fetch = FetchType.LAZY)
     private List<Showtime> showtimes = new ArrayList<>();
 
     @Column(name = "created_at", nullable = false, updatable = false)

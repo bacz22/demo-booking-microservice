@@ -54,7 +54,7 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 | `POST` | `/api/admin/theaters` | Admin | Tạo cụm rạp mới (`201 Created`) |
 | `GET` | `/api/admin/theaters/{id}` | Admin | Chi tiết cụm rạp |
 | `PUT` | `/api/admin/theaters/{id}` | Admin | Cập nhật thông tin cụm rạp |
-| `DELETE`| `/api/admin/theaters/{id}` | Admin | Xóa cụm rạp (Chặn xóa nếu còn suất chiếu tương lai) |
+| `DELETE`| `/api/admin/theaters/{id}` | Admin | Ngừng hoạt động cụm rạp (soft delete sang `INACTIVE`; chặn nếu còn suất chiếu tương lai) |
 
 #### Mẫu Request Tạo Cụm Rạp (`POST /api/admin/theaters`):
 ```json
@@ -79,7 +79,7 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 | `POST` | `/api/admin/theaters/{theaterId}/auditoriums` | Admin | Tạo phòng chiếu mới (`201 Created`, kiểm tra tên duy nhất trong rạp) |
 | `GET` | `/api/admin/auditoriums/{id}` | Admin | Chi tiết phòng chiếu |
 | `PUT` | `/api/admin/auditoriums/{id}` | Admin | Cập nhật thông tin phòng chiếu |
-| `DELETE`| `/api/admin/auditoriums/{id}` | Admin | Xóa phòng chiếu (Chặn xóa nếu còn suất chiếu tương lai) |
+| `DELETE`| `/api/admin/auditoriums/{id}` | Admin | Ngừng hoạt động phòng chiếu (soft delete sang `INACTIVE`; chặn nếu còn suất chiếu tương lai) |
 
 #### Mẫu Request Tạo Phòng Chiếu (`POST /api/admin/theaters/{theaterId}/auditoriums`):
 ```json

@@ -27,9 +27,11 @@ public class ShowtimeScheduleValidator {
         if (movieDurationMin <= 0) {
             throw new IllegalArgumentException("Thời lượng phim phải lớn hơn 0 phút");
         }
-        int cleaning = Math.max(cleaningDurationMin, 0);
+        if (cleaningDurationMin < 0) {
+            throw new IllegalArgumentException("Thời gian dọn phòng không được âm");
+        }
 
-        long totalMinutes = (long) movieDurationMin + cleaning;
+        long totalMinutes = (long) movieDurationMin + cleaningDurationMin;
         return startTime.plus(totalMinutes, ChronoUnit.MINUTES);
     }
 

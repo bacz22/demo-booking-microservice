@@ -100,7 +100,8 @@ public class AuditoriumService {
             throw new AuditoriumInUseException(id, "Không thể xóa phòng chiếu vì đang có suất chiếu trong tương lai");
         }
 
-        auditoriumRepository.delete(auditorium);
+        auditorium.setStatus(AuditoriumStatus.INACTIVE);
+        auditoriumRepository.save(auditorium);
     }
 
     public AuditoriumResponse getAuditoriumById(UUID id) {
