@@ -574,14 +574,14 @@ backend/theater-service/theater/src/main/java/com/cinebook/theater/
    - `GlobalExceptionHandler` & `ApiError`, `CorrelationIdFilter`, `CorsConfig`.
    - Viết test suite `TheaterAuditoriumSeatIntegrationTest` kiểm thử toàn bộ luồng (15/15 tests PASS).
 
-5. **Phase 5 — Quản Trị Suất Chiếu (Showtime API & State Machine)**: *(Kế hoạch tiếp theo)*
+5. **Phase 5 — Quản Trị Suất Chiếu (Showtime API & State Machine)**: *(Đã hoàn thành)*
    - `ShowtimeService`: CRUD suất chiếu kết hợp `ShowtimeScheduleValidator` và `MovieServiceClient`.
    - Quản lý vòng đời trạng thái suất chiếu (`SCHEDULED` $\rightarrow$ `SELLING` $\rightarrow$ `ENDED` / `CANCELLED`).
    - `ShowtimeAdminController`: Các API tạo, sửa, đổi trạng thái, xóa suất chiếu.
    - `ShowtimePublicController`: Lấy lịch chiếu theo phim/ngày/rạp/thành phố, lấy sơ đồ ghế và bảng giá theo suất chiếu.
-   - Viết integration test suite cho Showtime API.
+   - Viết test suite `ShowtimeIntegrationTest` kiểm thử toàn diện các luồng (21/21 tests PASS).
 
-6. **Phase 6 — Kiểm Tra Tiêu Chí Hoàn Thành (DoD) & Bàn Giao**:
+6. **Phase 6 — Kiểm Tra Tiêu Chí Hoàn Thành (DoD) & Bàn Giao**: *(Kế hoạch tiếp theo)*
    - Chạy full test suite Maven.
    - Kiểm tra endpoint `/actuator/health` trả về `{"status": "UP"}`.
    - Đồng bộ hoàn chỉnh tài liệu API vào `backend/docs/api.md`.

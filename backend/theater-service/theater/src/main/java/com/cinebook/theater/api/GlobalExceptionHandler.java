@@ -3,9 +3,11 @@ package com.cinebook.theater.api;
 import com.cinebook.theater.application.exception.AuditoriumInUseException;
 import com.cinebook.theater.application.exception.AuditoriumNotFoundException;
 import com.cinebook.theater.application.exception.DuplicateResourceException;
+import com.cinebook.theater.application.exception.InvalidShowtimeStateException;
 import com.cinebook.theater.application.exception.MovieNotFoundException;
 import com.cinebook.theater.application.exception.MovieServiceUnavailableException;
 import com.cinebook.theater.application.exception.ShowtimeInPastException;
+import com.cinebook.theater.application.exception.ShowtimeNotFoundException;
 import com.cinebook.theater.application.exception.ShowtimeOverlapException;
 import com.cinebook.theater.application.exception.TheaterInUseException;
 import com.cinebook.theater.application.exception.TheaterNotFoundException;
@@ -32,6 +34,16 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuditoriumNotFoundException.class)
     public ResponseEntity<ApiError> handleAuditoriumNotFound(AuditoriumNotFoundException exception, HttpServletRequest request) {
         return build(HttpStatus.NOT_FOUND, "AUDITORIUM_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ShowtimeNotFoundException.class)
+    public ResponseEntity<ApiError> handleShowtimeNotFound(ShowtimeNotFoundException exception, HttpServletRequest request) {
+        return build(HttpStatus.NOT_FOUND, "SHOWTIME_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidShowtimeStateException.class)
+    public ResponseEntity<ApiError> handleInvalidShowtimeState(InvalidShowtimeStateException exception, HttpServletRequest request) {
+        return build(HttpStatus.BAD_REQUEST, "INVALID_SHOWTIME_STATE", exception.getMessage(), request);
     }
 
     @ExceptionHandler(MovieNotFoundException.class)
