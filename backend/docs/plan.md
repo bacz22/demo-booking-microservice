@@ -581,7 +581,35 @@ backend/theater-service/theater/src/main/java/com/cinebook/theater/
    - `ShowtimePublicController`: Lấy lịch chiếu theo phim/ngày/rạp/thành phố, lấy sơ đồ ghế và bảng giá theo suất chiếu.
    - Viết test suite `ShowtimeIntegrationTest` kiểm thử toàn diện các luồng (21/21 tests PASS).
 
-6. **Phase 6 — Kiểm Tra Tiêu Chí Hoàn Thành (DoD) & Bàn Giao**: *(Kế hoạch tiếp theo)*
-   - Chạy full test suite Maven.
-   - Kiểm tra endpoint `/actuator/health` trả về `{"status": "UP"}`.
-   - Đồng bộ hoàn chỉnh tài liệu API vào `backend/docs/api.md`.
+6. **Phase 6 — Kiểm Tra Tiêu Chí Hoàn Thành (DoD) & Bàn Giao**: *(Đã hoàn thành)*
+   - Chạy full test suite Maven: **22/22 tests PASS (0 failures, 0 errors)**.
+   - Kiểm tra endpoint `/actuator/health` và bean `HealthEndpoint` trả về `{"status": "UP"}` qua `ActuatorHealthTest`.
+   - Đóng gói thành công artifact sản phẩm: `target/theater-service-0.0.1-SNAPSHOT.jar`.
+   - Đồng bộ hoàn chỉnh toàn bộ hợp đồng API vào `backend/docs/api.md`.
+
+---
+
+## 8. Bảng Kiểm Tra Tiêu Chí Hoàn Thành (Definition of Done — DoD)
+
+| STT | Hạng Mục Kiểm Tra | Tiêu Chí Kỹ Thuật / Nghiệp Vụ | Trạng Thái | Minh Chứng / Ghi Chú |
+| :---: | :--- | :--- | :---: | :--- |
+| **1** | **Database & Migrations** | Flyway V1 & V2 chạy thành công trên PostgreSQL (`theater_db:5434`), có bảng `theaters`, `auditoriums`, `seats`, `showtimes`, ràng buộc duy nhất và composite indexes. | ✅ ĐẠT | `V1__create_theater_schema.sql`, `V2__seed_theaters_auditoriums_seats.sql` (675 ghế mẫu). |
+| **2** | **Domain & JPA Models** | Entity, Enum, quan hệ `@OneToMany`, `@ManyToOne` chuẩn hóa; không dùng orphanRemoval nguy hiểm. | ✅ ĐẠT | 4 Entities, 5 Enums, 4 Repositories. |
+| **3** | **PostgreSQL Compatibility** | Không dùng `LOWER(:param)` trong JPQL với tham số nullable (tránh lỗi `ERROR: function lower(bytea) does not exist`). | ✅ ĐẠT | Sử dụng `JpaSpecificationExecutor` với `Specification` phân tích predicate chỉ khi non-null. |
+| **4** | **Cross-Service Integration** | Tích hợp `MovieServiceClient` qua Spring `RestClient` gọi `movie-service` (`:8081`) lấy `durationMin` và xác thực phim. | ✅ ĐẠT | `MovieServiceClientTest` (3/3 tests PASS), fallback xử lý lỗi `MovieNotFoundException`. |
+| **5** | **Showtime Overlap Detection** | Thuật toán chặn trùng lịch chiếu phòng: `newStart < existingEnd && newEnd > existingStart` kèm dọn dẹp phòng (cleaning duration). | ✅ ĐẠT | `ShowtimeScheduleValidatorTest` (6/6 edge cases PASS). |
+| **6** | **Seat Layout Automation** | Thuật toán sinh tự động sơ đồ ghế ma trận `A1..An`, phân loại `STANDARD`, `VIP`, `COUPLE` và tự động cập nhật `totalSeats`. | ✅ ĐẠT | `SeatService.generateLayout`, kiểm thử tích hợp `TheaterAuditoriumSeatIntegrationTest`. |
+| **7** | **Showtime State Machine** | Quản lý vòng đời chặt chẽ: `SCHEDULED` $\rightarrow$ `SELLING` $\rightarrow$ `ENDED` / `CANCELLED`. Chặn cập nhật/xóa khi đang mở bán. | ✅ ĐẠT | `ShowtimeService.updateStatus`, `ShowtimeIntegrationTest` (6/6 tests PASS). |
+| **8** | **Chuẩn Hóa Lỗi & Observability**| Cấu trúc phản hồi `ApiError` thống nhất, `GlobalExceptionHandler`, header truy vết phân tán `X-Correlation-Id`, cấu hình `CorsConfig`. | ✅ ĐẠT | Bắt trọn vẹn mọi domain & system exceptions. |
+| **9** | **Automated Testing** | 100% test cases tự động biên dịch và thực thi thành công trên JDK 21. | ✅ ĐẠT | **22/22 tests PASS** qua Maven test runner. |
+| **10**| **Healthcheck & Packaging** | Spring Boot Actuator `/actuator/health` báo cáo `UP`, đóng gói artifact JAR sẵn sàng containerize/deploy. | ✅ ĐẠT | `ActuatorHealthTest` PASS; `target/theater-service-0.0.1-SNAPSHOT.jar` (55.9MB). |
+
+---
+
+## 9. Sẵn Sàng Chuyển Tiếp Sang Booking Service (Next Roadmap Step)
+
+`theater-service` đã sẵn sàng 100% cung cấp các API thiết yếu cho `booking-service` (Port `8083`):
+- `GET /api/showtimes/{id}`: Cung cấp thông tin chi tiết suất chiếu, thời gian bắt đầu/kết thúc, phòng chiếu và trạng thái mở bán (`SELLING`).
+- `GET /api/showtimes/{id}/seats`: Cung cấp cấu trúc sơ đồ ghế chi tiết kèm bảng giá tính toán sẵn (`STANDARD = basePrice`, `VIP = basePrice + 20k`, `COUPLE = basePrice * 2`).
+- Mô hình ID ghế ổn định phục vụ cơ chế giữ chỗ tạm thời bằng Redis Distributed Lock / Redis Keyspace Notification (`seat_hold:{showtimeId}:{seatId}`).
+
