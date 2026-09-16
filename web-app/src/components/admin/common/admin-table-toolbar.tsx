@@ -1,4 +1,4 @@
-import { CheckSquare, Archive, Sparkles, Film, Clock, X } from 'lucide-react'
+import { CheckSquare, Trash2, Sparkles, Film, Clock, X } from 'lucide-react'
 import type { AdminMovieStatus } from '@/types/admin-movie'
 import { Button } from '@/components/ui/button'
 
@@ -6,14 +6,14 @@ interface AdminTableToolbarProps {
   selectedCount: number
   onClearSelection: () => void
   onBulkStatusChange: (status: AdminMovieStatus) => void
-  onBulkArchive: () => void
+  onBulkDelete: () => void
 }
 
 export function AdminTableToolbar({
   selectedCount,
   onClearSelection,
   onBulkStatusChange,
-  onBulkArchive,
+  onBulkDelete,
 }: AdminTableToolbarProps) {
   if (selectedCount === 0) return null
 
@@ -69,16 +69,16 @@ export function AdminTableToolbar({
           <span>Ngừng chiếu</span>
         </Button>
 
-        {/* Bulk Archive */}
+        {/* Bulk Delete */}
         <Button
           type="button"
           variant="outline"
           size="sm"
-          onClick={onBulkArchive}
-          className="h-7 text-[11px] rounded-lg gap-1 bg-card text-amber-600 dark:text-amber-400 border-amber-500/40 hover:bg-amber-500/10 cursor-pointer font-bold"
+          onClick={onBulkDelete}
+          className="h-7 text-[11px] rounded-lg gap-1 bg-card text-rose-600 dark:text-rose-400 border-rose-500/40 hover:bg-rose-500/10 hover:border-rose-500/50 cursor-pointer font-bold"
         >
-          <Archive className="w-3 h-3" />
-          <span>Lưu trữ</span>
+          <Trash2 className="w-3 h-3" />
+          <span>Xóa ({selectedCount})</span>
         </Button>
 
         {/* Clear selection */}

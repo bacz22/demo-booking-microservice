@@ -8,7 +8,8 @@ import { MovieCard } from '@/components/movie/movie-card'
 import { MovieCardSkeleton } from '@/components/movie/movie-card-skeleton'
 import { MovieEmptyState } from '@/components/movie/movie-empty-state'
 import { Button } from '@/components/ui/button'
-import { ALL_MOVIES } from '@/mocks/movies'
+import type { Movie } from '@/types/movie'
+import { movieApiService } from '@/services/movie-api.service'
 
 const INITIAL_FILTER_STATE: MovieFilterState = {
   genre: 'all',
@@ -23,11 +24,48 @@ export default function MoviesPage() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [filters, setFilters] = useState<MovieFilterState>(INITIAL_FILTER_STATE)
-  const [isLoading, setIsLoading] = useState(false)
+  const [movieList, setMovieList] = useState<Movie[]>([])
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Lọc và sắp xếp danh sách phim dựa trên mock data
+  // Tải danh sách phim từ Backend API
+  useEffect(() => {
+    setIsLoading(true)
+    movieApiService.getMovies({ pageSize: 50 })
+      .then((res) => {
+        if (res.items && res.items.length > 0) {
+          const mapped: Movie[] = res.items.map((m) => ({
+            id: m.id,
+            title: m.title,
+            originalTitle: m.originalTitle,
+            overview: m.overview,
+            posterUrl: m.posterUrl,
+            backdropUrl: m.backdropUrl,
+            trailerUrl: m.trailerUrl,
+            duration: m.duration,
+            releaseDate: m.releaseDate,
+            ageRating: m.ageRating,
+            genres: m.genres,
+            rating: m.rating,
+            director: m.director,
+            cast: m.cast,
+            status: m.status as any,
+          }))
+          setMovieList(mapped)
+        } else {
+          setMovieList([])
+        }
+      })
+      .catch(() => {
+        setMovieList([])
+      })
+      .finally(() => {
+        setIsLoading(false)
+      })
+  }, [])
+
+  // Lọc và sắp xếp danh sách phim
   const filteredMovies = useMemo(() => {
-    return ALL_MOVIES.filter((movie) => {
+    return movieList.filter((movie) => {
       // 1. Lọc theo từ khóa tìm kiếm (tên phim, thể loại)
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim()
@@ -165,6 +203,16 @@ export default function MoviesPage() {
       ) : (
         /* Empty State */
         <MovieEmptyState
+          title={
+            movieList.length === 0 && !searchQuery && filters.genre === 'all' && filters.status === 'all'
+              ? 'Chưa có dữ liệu phim'
+              : 'Không tìm thấy phim phù hợp'
+          }
+          description={
+            movieList.length === 0 && !searchQuery && filters.genre === 'all' && filters.status === 'all'
+              ? 'Hiện tại hệ thống chưa có dữ liệu phim nào hoặc máy chủ chưa sẵn sàng. Vui lòng quay lại sau.'
+              : undefined
+          }
           searchQuery={searchQuery}
           onReset={handleResetAll}
           resetLabel="Đặt lại toàn bộ"

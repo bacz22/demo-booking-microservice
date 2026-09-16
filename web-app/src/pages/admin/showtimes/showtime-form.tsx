@@ -135,8 +135,8 @@ export default function AdminShowtimeForm() {
         setTheaters(thRes.items)
 
         const mvRes = await getAdminMovies({ pageSize: 100 })
-        // Only active/showing movies
-        setMovies(mvRes.items.filter((m) => m.status !== 'archived'))
+        // Only showing or coming soon movies
+        setMovies(mvRes.items.filter((m) => m.status !== 'ended'))
       } catch (err) {
         console.error('Lỗi tải dữ liệu rạp và phim:', err)
       }

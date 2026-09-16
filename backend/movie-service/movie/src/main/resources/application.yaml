@@ -30,6 +30,17 @@ spring:
   jackson:
     time-zone: UTC
 
+  servlet:
+    multipart:
+      max-file-size: ${MULTIPART_MAX_FILE_SIZE:100MB}
+      max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:100MB}
+
+cloudinary:
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:dusx4ymdy}
+  api-key: ${CLOUDINARY_API_KEY:458343336469922}
+  api-secret: ${CLOUDINARY_API_SECRET:dWGPXlmWLzOB88F-6A6Zb3ik5_k}
+  folder: ${CLOUDINARY_FOLDER:cinebook}
+
 server:
   port: ${SERVER_PORT:8081}
   shutdown: graceful

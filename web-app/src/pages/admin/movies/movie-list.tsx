@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   Plus,
   ExternalLink,
   Pencil,
-  Archive,
+  Trash2,
   MoreVertical,
   Film,
   Sparkles,
@@ -19,14 +19,8 @@ import type {
   MovieFilterState,
   MoviePaginationResult,
 } from '@/types/admin-movie'
-import {
-  getAdminMovies,
-  getAllGenres,
-  updateMovieStatus,
-  archiveMovie,
-  bulkUpdateMovieStatus,
-  bulkArchiveMovies,
-} from '@/mocks/admin/movies'
+import { movieApiService } from '@/services/movie-api.service'
+
 import { AdminPageHeader } from '@/components/admin/common/admin-page-header'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AdminFilterBar } from '@/components/admin/common/admin-filter-bar'
@@ -44,6 +38,7 @@ import { cn } from '@/lib/utils'
 
 export default function AdminMovieList() {
   const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
 
   // Derive filter state from URL Query params
   const filters: MovieFilterState = useMemo(() => {
@@ -59,18 +54,26 @@ export default function AdminMovieList() {
     }
   }, [searchParams])
 
+  const hasActiveFilters = Boolean(
+    filters.search ||
+    (filters.status && filters.status !== 'all') ||
+    (filters.genre && filters.genre !== 'all') ||
+    (filters.ageRating && filters.ageRating !== 'all')
+  )
+
   const [data, setData] = useState<MoviePaginationResult | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isSearching, setIsSearching] = useState(false)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null)
   const [confirmDialog, setConfirmDialog] = useState<{
     isOpen: boolean
-    mode: 'single-archive' | 'bulk-archive'
+    mode: 'single-delete' | 'bulk-delete'
     targetMovie?: AdminMovie
     isLoading: boolean
   }>({
     isOpen: false,
-    mode: 'single-archive',
+    mode: 'single-delete',
     isLoading: false,
   })
 
@@ -90,24 +93,53 @@ export default function AdminMovieList() {
     [searchParams, setSearchParams]
   )
 
-  const [genresList] = useState<string[]>(() => getAllGenres())
+  const [genresList, setGenresList] = useState<string[]>([])
   const [refreshIndex, setRefreshIndex] = useState(0)
+
+  useEffect(() => {
+    let isCancelled = false
+
+    movieApiService.getGenres()
+      .then((genres) => {
+        if (!isCancelled) {
+          setGenresList(genres)
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          setGenresList([])
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
 
   // Load movies based on filters and refresh trigger
   useEffect(() => {
     let isCancelled = false
 
-    getAdminMovies(filters)
+    // Only show full-page skeleton on initial mount when no data has been loaded yet
+    if (!data) {
+      setIsLoading(true)
+    } else {
+      setIsSearching(true)
+    }
+
+    movieApiService.getMovies(filters)
       .then((result) => {
         if (!isCancelled) {
           setData(result)
           setIsLoading(false)
+          setIsSearching(false)
         }
       })
       .catch(() => {
         if (!isCancelled) {
-          toast.error('Không thể tải danh sách phim. Vui lòng thử lại.')
+          setData({ items: [], total: 0, page: 1, pageSize: 10, totalPages: 0 })
           setIsLoading(false)
+          setIsSearching(false)
         }
       })
 
@@ -123,9 +155,9 @@ export default function AdminMovieList() {
 
 
   // Handlers for Filters
-  const handleSearchChange = (search: string) => {
+  const handleSearchChange = useCallback((search: string) => {
     updateUrlParams({ search, page: 1 })
-  }
+  }, [updateUrlParams])
 
   const handleStatusChange = (status: string) => {
     updateUrlParams({ status, page: 1 })
@@ -170,19 +202,21 @@ export default function AdminMovieList() {
   // Row Actions: Quick Status Change
   const handleQuickStatus = async (movie: AdminMovie, status: AdminMovieStatus) => {
     setOpenActionMenuId(null)
-    const success = await updateMovieStatus(movie.id, status)
-    if (success) {
+    try {
+      await movieApiService.updateMovieStatus(movie, status)
       toast.success(`Đã cập nhật trạng thái phim "${movie.title}"!`)
       triggerRefresh()
+    } catch {
+      toast.error('Không thể cập nhật trạng thái phim. Vui lòng kiểm tra backend.')
     }
   }
 
-  // Row Action: Single Archive
-  const handleOpenArchiveDialog = (movie: AdminMovie) => {
+  // Row Action: Single Delete
+  const handleOpenDeleteDialog = (movie: AdminMovie) => {
     setOpenActionMenuId(null)
     setConfirmDialog({
       isOpen: true,
-      mode: 'single-archive',
+      mode: 'single-delete',
       targetMovie: movie,
       isLoading: false,
     })
@@ -191,17 +225,24 @@ export default function AdminMovieList() {
   // Bulk Actions
   const handleBulkStatusChange = async (status: AdminMovieStatus) => {
     if (selectedIds.length === 0) return
-    const count = await bulkUpdateMovieStatus(selectedIds, status)
-    toast.success(`Đã cập nhật trạng thái cho ${count} phim đã chọn!`)
-    setSelectedIds([])
-    triggerRefresh()
+    try {
+      const selectedMovies = data?.items.filter((m) => selectedIds.includes(m.id)) || []
+      for (const m of selectedMovies) {
+        await movieApiService.updateMovieStatus(m, status)
+      }
+      toast.success(`Đã cập nhật trạng thái cho ${selectedIds.length} phim đã chọn!`)
+      setSelectedIds([])
+      triggerRefresh()
+    } catch {
+      toast.error('Có lỗi xảy ra khi cập nhật trạng thái hàng loạt.')
+    }
   }
 
-  const handleOpenBulkArchiveDialog = () => {
+  const handleOpenBulkDeleteDialog = () => {
     if (selectedIds.length === 0) return
     setConfirmDialog({
       isOpen: true,
-      mode: 'bulk-archive',
+      mode: 'bulk-delete',
       isLoading: false,
     })
   }
@@ -210,18 +251,20 @@ export default function AdminMovieList() {
   const handleConfirmAction = async () => {
     try {
       setConfirmDialog((prev) => ({ ...prev, isLoading: true }))
-      if (confirmDialog.mode === 'single-archive' && confirmDialog.targetMovie) {
-        await archiveMovie(confirmDialog.targetMovie.id)
-        toast.success(`Đã chuyển phim "${confirmDialog.targetMovie.title}" vào lưu trữ an toàn!`)
-      } else if (confirmDialog.mode === 'bulk-archive') {
-        const count = await bulkArchiveMovies(selectedIds)
-        toast.success(`Đã lưu trữ an toàn ${count} phim đã chọn!`)
+      if (confirmDialog.mode === 'single-delete' && confirmDialog.targetMovie) {
+        await movieApiService.deleteMovie(confirmDialog.targetMovie.id)
+        toast.success(`Đã xóa phim "${confirmDialog.targetMovie.title}" thành công!`)
+      } else if (confirmDialog.mode === 'bulk-delete') {
+        for (const id of selectedIds) {
+          await movieApiService.deleteMovie(id)
+        }
+        toast.success(`Đã xóa ${selectedIds.length} phim đã chọn thành công!`)
         setSelectedIds([])
       }
-      setConfirmDialog({ isOpen: false, mode: 'single-archive', isLoading: false })
+      setConfirmDialog({ isOpen: false, mode: 'single-delete', isLoading: false })
       triggerRefresh()
     } catch {
-      toast.error('Thao tác không thành công. Vui lòng thử lại.')
+      toast.error('Thao tác xóa không thành công. Vui lòng thử lại.')
       setConfirmDialog((prev) => ({ ...prev, isLoading: false }))
     }
   }
@@ -273,6 +316,7 @@ export default function AdminMovieList() {
       <AdminFilterBar
         filters={filters}
         genresList={genresList}
+        isSearching={isSearching}
         onSearchChange={handleSearchChange}
         onStatusChange={handleStatusChange}
         onGenreChange={handleGenreChange}
@@ -286,12 +330,12 @@ export default function AdminMovieList() {
         selectedCount={selectedIds.length}
         onClearSelection={() => setSelectedIds([])}
         onBulkStatusChange={handleBulkStatusChange}
-        onBulkArchive={handleOpenBulkArchiveDialog}
+        onBulkDelete={handleOpenBulkDeleteDialog}
       />
 
       {/* 4. Semantic Data Table */}
       <div className="rounded-2xl border border-border/70 bg-card p-1 shadow-sm overflow-hidden">
-        {isLoading ? (
+        {isLoading && !data ? (
           <div className="p-6 space-y-4">
             <Skeleton className="h-10 w-full rounded-xl" />
             {Array.from({ length: 5 }).map((_, i) => (
@@ -299,19 +343,32 @@ export default function AdminMovieList() {
             ))}
           </div>
         ) : !data || data.items.length === 0 ? (
-          /* Empty State using shared component */
-          <EmptyState
-            icon={Search}
-            title="Không tìm thấy bộ phim phù hợp"
-            description="Không có phim nào khớp với bộ lọc hoặc từ khóa tìm kiếm hiện tại. Bạn hãy thử điều chỉnh lại bộ lọc."
-            action={{
-              label: 'Xóa tất cả bộ lọc',
-              onClick: handleResetFilters,
-            }}
-            className="py-12"
-          />
+          /* Empty State */
+          hasActiveFilters ? (
+            <EmptyState
+              icon={Search}
+              title="Không tìm thấy bộ phim phù hợp"
+              description="Không có phim nào khớp với bộ lọc hoặc từ khóa tìm kiếm hiện tại. Bạn hãy thử điều chỉnh lại bộ lọc."
+              action={{
+                label: 'Xóa tất cả bộ lọc',
+                onClick: handleResetFilters,
+              }}
+              className="py-12"
+            />
+          ) : (
+            <EmptyState
+              icon={Film}
+              title="Chưa có dữ liệu phim"
+              description="Hệ thống hiện tại chưa có bộ phim nào hoặc máy chủ chưa sẵn sàng. Bạn có thể thêm phim mới vào hệ thống."
+              action={{
+                label: 'Thêm phim mới',
+                onClick: () => navigate('/admin/movies/new'),
+              }}
+              className="py-12"
+            />
+          )
         ) : (
-          <div className="overflow-x-auto scrollbar-thin">
+          <div className={cn('overflow-x-auto scrollbar-thin transition-opacity duration-150', isSearching && 'opacity-60')}>
             <table
               className="w-full text-left text-xs border-collapse min-w-[980px]"
               aria-label="Bảng quản lý danh sách phim"
@@ -601,17 +658,15 @@ export default function AdminMovieList() {
 
                             <div className="border-t border-border/50 my-1" />
 
-                            {/* 4. Archive movie (with confirmation) */}
-                            {movie.status !== 'archived' && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenArchiveDialog(movie)}
-                                className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer text-left font-semibold"
-                              >
-                                <Archive className="w-3.5 h-3.5" />
-                                <span>Lưu trữ phim</span>
-                              </button>
-                            )}
+                            {/* 4. Delete movie (with confirmation) */}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenDeleteDialog(movie)}
+                              className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer text-left font-semibold"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Xóa phim</span>
+                            </button>
                           </PopoverContent>
                         </Popover>
                       </td>
@@ -624,7 +679,7 @@ export default function AdminMovieList() {
         )}
 
         {/* 5. Pagination */}
-        {data && (
+        {data && data.items.length > 0 && (
           <div className="p-3 border-t border-border/50">
             <AdminPagination
               page={data.page}
@@ -638,28 +693,28 @@ export default function AdminMovieList() {
         )}
       </div>
 
-      {/* 6. Confirm Dialog for Archive (Single / Bulk) */}
+      {/* 6. Confirm Dialog for Delete (Single / Bulk) */}
       <AdminConfirmDialog
         isOpen={confirmDialog.isOpen}
         title={
-          confirmDialog.mode === 'single-archive'
-            ? 'Xác nhận Lưu trữ phim'
-            : `Xác nhận Lưu trữ ${selectedIds.length} phim đã chọn`
+          confirmDialog.mode === 'single-delete'
+            ? 'Xác nhận xóa phim'
+            : `Xác nhận xóa ${selectedIds.length} phim đã chọn`
         }
         targetName={
-          confirmDialog.mode === 'single-archive'
+          confirmDialog.mode === 'single-delete'
             ? confirmDialog.targetMovie?.title
             : undefined
         }
-        description="Phim sẽ được chuyển sang trạng thái Lưu trữ (Archived) và tự động ẩn khỏi danh mục lịch chiếu khách hàng."
-        consequenceWarning="Lưu trữ phim sẽ không làm mất dữ liệu lịch sử đặt vé hoặc báo cáo doanh thu liên quan của phim trên hệ thống CineBook."
-        confirmText="Lưu trữ ngay"
+        description="Bộ phim này sẽ bị xóa hoàn toàn khỏi cơ sở dữ liệu hệ thống CineBook."
+        consequenceWarning="Hành động này không thể hoàn tác. Dữ liệu phim sẽ bị xóa vĩnh viễn."
+        confirmText="Xóa vĩnh viễn"
         cancelText="Hủy bỏ"
-        variant="warning"
+        variant="destructive"
         isLoading={confirmDialog.isLoading}
         onConfirm={handleConfirmAction}
         onCancel={() =>
-          setConfirmDialog({ isOpen: false, mode: 'single-archive', isLoading: false })
+          setConfirmDialog({ isOpen: false, mode: 'single-delete', isLoading: false })
         }
       />
     </div>

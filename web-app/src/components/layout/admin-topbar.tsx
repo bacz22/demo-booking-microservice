@@ -6,7 +6,6 @@ import {
   LogOut,
   ChevronDown,
   Shield,
-  Database,
   User,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -63,23 +62,13 @@ export function AdminTopbar({ onOpenMobileMenu }: AdminTopbarProps) {
           <Menu className="h-5 w-5" />
         </Button>
 
-        <div className="flex items-center gap-2">
-          <Badge
-            variant="outline"
-            className="hidden sm:inline-flex items-center gap-1.5 py-0.5 px-2 bg-primary/10 text-primary border-primary/25 text-[11px] font-bold"
-          >
-            <Shield className="w-3 h-3" />
-            <span>Khu Vực Quản Trị</span>
-          </Badge>
-
-          <Badge
-            variant="outline"
-            className="inline-flex items-center gap-1.5 py-0.5 px-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/25 text-[11px] font-semibold"
-          >
-            <Database className="w-3 h-3 text-amber-500" />
-            <span>Mô phỏng (Mock)</span>
-          </Badge>
-        </div>
+        <Badge
+          variant="outline"
+          className="hidden sm:inline-flex items-center gap-1.5 py-0.5 px-2 bg-primary/10 text-primary border-primary/25 text-[11px] font-bold"
+        >
+          <Shield className="w-3 h-3" />
+          <span>Khu Vực Quản Trị</span>
+        </Badge>
       </div>
 
       {/* Right Area: Actions, Theme, "Về Website", Profile */}

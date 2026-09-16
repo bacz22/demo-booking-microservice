@@ -28,9 +28,11 @@ public class MovieController {
     public Page<MovieResponse> search(
         @RequestParam(required = false) String search,
         @RequestParam(required = false) String status,
+        @RequestParam(required = false) String genre,
+        @RequestParam(required = false) String ageRating,
         @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable
     ) {
-        return movieService.search(search, status, pageable);
+        return movieService.search(search, status, genre, ageRating, pageable);
     }
 
     @GetMapping("/{id}")

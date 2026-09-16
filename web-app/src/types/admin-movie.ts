@@ -1,4 +1,4 @@
-export type AdminMovieStatus = 'now-showing' | 'coming-soon' | 'ended' | 'archived'
+export type AdminMovieStatus = 'now-showing' | 'coming-soon' | 'ended'
 
 export type AdminAgeRating = 'P' | 'K' | 'T13' | 'T16' | 'T18'
 

@@ -9,12 +9,18 @@ import com.cinebook.movie.domain.model.MovieStatus;
 import com.cinebook.movie.domain.repository.GenreRepository;
 import com.cinebook.movie.domain.repository.MovieRepository;
 import jakarta.transaction.Transactional;
+import jakarta.persistence.criteria.Join;
+import jakarta.persistence.criteria.JoinType;
+import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -23,6 +29,8 @@ import java.util.stream.Collectors;
 
 @Service
 public class MovieService {
+
+    private static final Set<String> SUPPORTED_AGE_RATINGS = Set.of("P", "K", "T13", "T16", "T18");
 
     private final MovieRepository movieRepository;
     private final GenreRepository genreRepository;
@@ -83,26 +91,60 @@ public class MovieService {
     }
 
     @Transactional
-    public Page<MovieResponse> search(String search, String status, Pageable pageable) {
+    public Page<MovieResponse> search(
+        String search,
+        String status,
+        String genre,
+        String ageRating,
+        Pageable pageable
+    ) {
         String normalizedSearch = search == null ? "" : search.trim();
         MovieStatus normalizedStatus = status == null || status.isBlank() ? null : MovieStatus.from(status);
+        String normalizedGenre = genre == null || genre.isBlank() ? null : genre.trim();
+        String normalizedAgeRating = ageRating == null || ageRating.isBlank()
+            ? null
+            : ageRating.trim().toUpperCase(Locale.ROOT);
 
-        Page<Movie> movies;
-        if (normalizedStatus == null && normalizedSearch.isBlank()) {
-            movies = movieRepository.findAllByOrderByCreatedAtDesc(pageable);
-        } else if (normalizedStatus == null) {
-            movies = movieRepository.findByTitleContainingIgnoreCaseOrderByCreatedAtDesc(normalizedSearch, pageable);
-        } else if (normalizedSearch.isBlank()) {
-            movies = movieRepository.findByStatusOrderByCreatedAtDesc(normalizedStatus, pageable);
-        } else {
-            movies = movieRepository.findByStatusAndTitleContainingIgnoreCaseOrderByCreatedAtDesc(
-                normalizedStatus,
-                normalizedSearch,
-                pageable
-            );
+        if (normalizedAgeRating != null && !SUPPORTED_AGE_RATINGS.contains(normalizedAgeRating)) {
+            throw new IllegalArgumentException("Unsupported age rating: " + ageRating);
         }
 
-        return movies.map(this::toResponse);
+        Specification<Movie> specification = (root, query, criteriaBuilder) -> {
+            query.distinct(true);
+            List<Predicate> predicates = new ArrayList<>();
+
+            if (!normalizedSearch.isBlank()) {
+                String pattern = "%" + normalizedSearch.toLowerCase(Locale.ROOT) + "%";
+                predicates.add(criteriaBuilder.or(
+                    criteriaBuilder.like(criteriaBuilder.lower(root.<String>get("title")), pattern),
+                    criteriaBuilder.like(criteriaBuilder.lower(root.<String>get("originalTitle")), pattern)
+                ));
+            }
+            if (normalizedStatus != null) {
+                predicates.add(criteriaBuilder.equal(root.get("status"), normalizedStatus));
+            }
+            if (normalizedGenre != null) {
+                Join<Movie, Genre> genreJoin = root.join("genres", JoinType.INNER);
+                predicates.add(criteriaBuilder.equal(
+                    criteriaBuilder.lower(genreJoin.<String>get("name")),
+                    normalizedGenre.toLowerCase(Locale.ROOT)
+                ));
+            }
+            if (normalizedAgeRating != null) {
+                predicates.add(criteriaBuilder.equal(root.get("ageRating"), normalizedAgeRating));
+            }
+
+            return criteriaBuilder.and(predicates.toArray(Predicate[]::new));
+        };
+
+        return movieRepository.findAll(specification, pageable).map(this::toResponse);
+    }
+
+    @Transactional
+    public java.util.List<String> getGenres() {
+        return genreRepository.findAllByOrderByNameAsc().stream()
+            .map(Genre::getName)
+            .toList();
     }
 
     @Transactional

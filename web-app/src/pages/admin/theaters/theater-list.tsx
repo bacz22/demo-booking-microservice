@@ -272,8 +272,9 @@ export default function AdminTheaterList() {
                 filters.search ? (
                   <button
                     type="button"
+                    onMouseDown={(e) => e.preventDefault()}
                     onClick={() => handleSearchChange('')}
-                    className="p-1 rounded-md text-muted-foreground hover:text-foreground cursor-pointer"
+                    className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
                     aria-label="Xóa từ khóa tìm kiếm"
                   >
                     <X className="w-3.5 h-3.5" />

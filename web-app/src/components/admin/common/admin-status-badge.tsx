@@ -7,7 +7,6 @@ import {
   Film,
   PlayCircle,
   Info,
-  Archive,
   Sparkles,
   Wrench,
 } from 'lucide-react'
@@ -18,7 +17,6 @@ export type BadgeVariantType =
   | 'now-showing'
   | 'coming-soon'
   | 'ended'
-  | 'archived'
   // Theater and Auditorium status
   | 'active'
   | 'maintenance'
@@ -83,12 +81,6 @@ export function AdminStatusBadge({
           icon: Clock,
           defaultLabel: 'Ngừng chiếu',
           className: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
-        }
-      case 'archived':
-        return {
-          icon: Archive,
-          defaultLabel: 'Đã lưu trữ',
-          className: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
         }
 
       // Theater & Auditorium Statuses

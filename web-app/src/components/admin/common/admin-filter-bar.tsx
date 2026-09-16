@@ -1,4 +1,5 @@
-import { Search, X, RotateCcw, ArrowUpDown, Filter } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Search, X, RotateCcw, ArrowUpDown, Filter, Loader2 } from 'lucide-react'
 import type { MovieFilterState } from '@/types/admin-movie'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,6 +15,7 @@ import {
 interface AdminFilterBarProps {
   filters: MovieFilterState
   genresList: string[]
+  isSearching?: boolean
   onSearchChange: (val: string) => void
   onStatusChange: (val: string) => void
   onGenreChange: (val: string) => void
@@ -25,6 +27,7 @@ interface AdminFilterBarProps {
 export function AdminFilterBar({
   filters,
   genresList,
+  isSearching = false,
   onSearchChange,
   onStatusChange,
   onGenreChange,
@@ -32,6 +35,32 @@ export function AdminFilterBar({
   onSortChange,
   onReset,
 }: AdminFilterBarProps) {
+  // Local state for smooth, un-interrupted typing (including Vietnamese IME / Telex)
+  const [searchTerm, setSearchTerm] = useState(filters.search)
+
+  // Sync internal state when filters.search changes from outside (e.g. Reset or URL change)
+  useEffect(() => {
+    setSearchTerm(filters.search)
+  }, [filters.search])
+
+  // Debounce calling onSearchChange to parent
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (searchTerm !== filters.search) {
+        onSearchChange(searchTerm)
+      }
+    }, 350)
+
+    return () => {
+      clearTimeout(handler)
+    }
+  }, [searchTerm, filters.search, onSearchChange])
+
+  const handleClear = () => {
+    setSearchTerm('')
+    onSearchChange('')
+  }
+
   // Count active filters (ignoring default sort & page)
   let activeFilterCount = 0
   if (filters.search) activeFilterCount++
@@ -46,16 +75,19 @@ export function AdminFilterBar({
         {/* Search Bar */}
         <div className="lg:col-span-4 relative">
           <Input
-            value={filters.search}
-            onChange={(e) => onSearchChange(e.target.value)}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Tìm theo tên phim hoặc tên gốc..."
             leftIcon={<Search className="w-4 h-4 text-muted-foreground" />}
             rightIcon={
-              filters.search ? (
+              isSearching ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+              ) : searchTerm ? (
                 <button
                   type="button"
-                  onClick={() => onSearchChange('')}
-                  className="p-1 rounded-md text-muted-foreground hover:text-foreground cursor-pointer"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={handleClear}
+                  className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors cursor-pointer"
                   aria-label="Xóa từ khóa tìm kiếm"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -80,7 +112,6 @@ export function AdminFilterBar({
               <SelectItem value="now-showing">Đang chiếu (Now Showing)</SelectItem>
               <SelectItem value="coming-soon">Sắp chiếu (Coming Soon)</SelectItem>
               <SelectItem value="ended">Ngừng chiếu (Ended)</SelectItem>
-              <SelectItem value="archived">Đã lưu trữ (Archived)</SelectItem>
             </SelectContent>
           </Select>
         </div>

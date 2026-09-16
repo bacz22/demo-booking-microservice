@@ -303,7 +303,7 @@ const INITIAL_ADMIN_MOVIES: AdminMovie[] = [
     rating: 7.8,
     director: 'James Cameron',
     cast: ['Sam Worthington', 'Zoe Saldana', 'Sigourney Weaver'],
-    status: 'archived',
+    status: 'ended',
     showtimeCount: 0,
     updatedAt: '2026-07-20 09:00',
     createdAt: '2022-11-20 14:00',
@@ -326,7 +326,7 @@ const INITIAL_ADMIN_MOVIES: AdminMovie[] = [
     rating: 8.3,
     director: 'Joseph Kosinski',
     cast: ['Tom Cruise', 'Miles Teller', 'Jennifer Connelly'],
-    status: 'archived',
+    status: 'ended',
     showtimeCount: 0,
     updatedAt: '2026-07-15 16:00',
     createdAt: '2022-05-01 10:00',
@@ -551,7 +551,7 @@ export async function updateMovieStatus(
 }
 
 export async function archiveMovie(id: string): Promise<boolean> {
-  return updateMovieStatus(id, 'archived')
+  return updateMovieStatus(id, 'ended')
 }
 
 export async function bulkUpdateMovieStatus(
@@ -581,7 +581,7 @@ export async function bulkUpdateMovieStatus(
 }
 
 export async function bulkArchiveMovies(ids: string[]): Promise<number> {
-  return bulkUpdateMovieStatus(ids, 'archived')
+  return bulkUpdateMovieStatus(ids, 'ended')
 }
 
 export function resetMoviesToDefault(): void {

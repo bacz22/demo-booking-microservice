@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, Building2 } from 'lucide-react'
+import { ArrowLeft, Building2, Film } from 'lucide-react'
 import { MovieInfo } from '@/components/movie/movie-info'
 import { ShowtimeDateSelector } from '@/components/movie/showtime-date-selector'
 import { CinemaShowtimeCard } from '@/components/cinema/cinema-showtime-card'
 import { EmptyState } from '@/components/ui/empty-state'
-import { getMovieById, HERO_MOVIE } from '@/mocks/movies'
+import { Skeleton } from '@/components/ui/skeleton'
+import type { Movie } from '@/types/movie'
+import { movieApiService } from '@/services/movie-api.service'
 import { MOCK_CINEMAS } from '@/mocks/cinemas'
 import { cn } from '@/lib/utils'
 
@@ -24,10 +26,46 @@ export default function MovieDetailPage() {
   const { movieId } = useParams<{ movieId: string }>()
   const navigate = useNavigate()
 
-  // 1. Tìm thông tin phim từ mock data
-  const movie = useMemo(() => {
-    if (!movieId) return HERO_MOVIE
-    return getMovieById(movieId) || HERO_MOVIE
+  // 1. Quản lý thông tin phim từ API
+  const [movie, setMovie] = useState<Movie | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    if (!movieId) {
+      setIsLoading(false)
+      return
+    }
+    setIsLoading(true)
+    movieApiService.getMovieById(movieId)
+      .then((m) => {
+        if (m) {
+          setMovie({
+            id: m.id,
+            title: m.title,
+            originalTitle: m.originalTitle,
+            overview: m.overview,
+            posterUrl: m.posterUrl,
+            backdropUrl: m.backdropUrl,
+            trailerUrl: m.trailerUrl,
+            duration: m.duration,
+            releaseDate: m.releaseDate,
+            ageRating: m.ageRating,
+            genres: m.genres,
+            rating: m.rating,
+            director: m.director,
+            cast: m.cast,
+            status: m.status as any,
+          })
+        } else {
+          setMovie(null)
+        }
+      })
+      .catch(() => {
+        setMovie(null)
+      })
+      .finally(() => {
+        setIsLoading(false)
+      })
   }, [movieId])
 
   // 2. Quản lý trạng thái ngày chiếu được chọn (mặc định là hôm nay)
@@ -58,6 +96,49 @@ export default function MovieDetailPage() {
   const handleSelectShowtime = (showtime: { id: string }) => {
     setSelectedShowtimeId(showtime.id)
     navigate(`/booking/${showtime.id}/seats`)
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-8 md:space-y-12 pb-16 animate-pulse">
+        <Skeleton className="h-6 w-40 rounded-lg" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <Skeleton className="h-[420px] rounded-2xl md:col-span-1" />
+          <div className="space-y-4 md:col-span-2">
+            <Skeleton className="h-10 w-3/4 rounded-xl" />
+            <Skeleton className="h-6 w-1/2 rounded-lg" />
+            <Skeleton className="h-24 w-full rounded-xl" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!movie) {
+    return (
+      <div className="space-y-8 pb-16">
+        <div>
+          <Link
+            to="/movies"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Quay lại danh sách phim</span>
+          </Link>
+        </div>
+
+        <EmptyState
+          icon={Film}
+          title="Không tìm thấy phim"
+          description="Bộ phim bạn đang tìm kiếm không tồn tại hoặc chưa có dữ liệu trên hệ thống."
+          action={{
+            label: 'Quay lại danh sách phim',
+            onClick: () => navigate('/movies'),
+          }}
+          className="py-16"
+        />
+      </div>
+    )
   }
 
   return (

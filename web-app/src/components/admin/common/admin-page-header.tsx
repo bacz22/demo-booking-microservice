@@ -1,7 +1,6 @@
 import React from 'react'
-import { ChevronRight, Database } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { Badge } from '@/components/ui/badge'
 
 export interface BreadcrumbItem {
   label: string
@@ -12,7 +11,6 @@ export interface AdminPageHeaderProps {
   title: string
   description?: string
   breadcrumbs?: BreadcrumbItem[]
-  showMockBadge?: boolean
   lastUpdated?: string
   actions?: React.ReactNode
 }
@@ -21,7 +19,6 @@ export function AdminPageHeader({
   title,
   description,
   breadcrumbs = [{ label: 'Admin', href: '/admin' }],
-  showMockBadge = true,
   lastUpdated,
   actions,
 }: AdminPageHeaderProps) {
@@ -60,16 +57,6 @@ export function AdminPageHeader({
             <h1 className="text-2xl sm:text-3xl font-heading font-black tracking-tight text-foreground">
               {title}
             </h1>
-            {showMockBadge && (
-              <Badge
-                variant="outline"
-                className="gap-1.5 py-0.5 px-2 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 text-[11px] font-semibold"
-                title="Dữ liệu đang chạy ở chế độ mô phỏng frontend (Mock Data)"
-              >
-                <Database className="w-3 h-3 text-amber-500" />
-                <span>Dữ liệu mẫu</span>
-              </Badge>
-            )}
           </div>
           {description && (
             <p className="text-sm text-muted-foreground leading-relaxed max-w-3xl">

@@ -114,7 +114,7 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
         )}
         {inputNode}
         {effectiveRightIcon && (
-          <div className="pointer-events-none absolute right-3.5 flex items-center justify-center">
+          <div className="absolute right-3 flex items-center justify-center z-10">
             {effectiveRightIcon}
           </div>
         )}
