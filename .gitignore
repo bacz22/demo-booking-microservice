@@ -1,0 +1,26 @@
+# Only backend and web-app are managed at repository root.
+/*
+!/.gitignore
+!/backend/
+!/backend/**
+!/web-app/
+!/web-app/**
+
+# Generated files and local tooling data.
+**/target/
+**/node_modules/
+**/.idea/
+**/*.iml
+**/.classpath
+**/.project
+**/.settings/
+
+# Local environment and secret files.
+**/.env
+**/.env.*
+!**/.env.example
+
+# OS/editor files.
+.DS_Store
+Thumbs.db
+

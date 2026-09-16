@@ -46,3 +46,10 @@ management:
 logging:
   pattern:
     level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"
+
+cinebook:
+  services:
+    movie-service:
+      base-url: ${MOVIE_SERVICE_URL:http://localhost:8081}
+      connect-timeout-ms: ${MOVIE_SERVICE_CONNECT_TIMEOUT:3000}
+      read-timeout-ms: ${MOVIE_SERVICE_READ_TIMEOUT:5000}
