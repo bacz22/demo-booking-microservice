@@ -50,6 +50,8 @@ public class ShowtimeAdminController {
         @RequestParam(required = false) UUID movieId,
         @RequestParam(required = false) ShowtimeStatus status,
         @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
         @RequestParam(defaultValue = "0") int page,
         @RequestParam(defaultValue = "10") int pageSize
     ) {
@@ -59,6 +61,8 @@ public class ShowtimeAdminController {
             movieId,
             status,
             date,
+            dateFrom,
+            dateTo,
             PageRequest.of(page, pageSize, Sort.by("startTime").ascending())
         );
     }

@@ -6,6 +6,11 @@ import type {
   AuditoriumStatus,
   AuditoriumFormData,
 } from '@/types/admin-theater'
+import {
+  theaterApiService,
+  mapBackendFormatToFrontend,
+  mapBackendAuditoriumStatusToFrontend,
+} from '@/services/theater-api.service'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -47,23 +52,51 @@ export function AuditoriumModal({
     format: '2D',
     status: 'active',
   })
+  const [currentAuditorium, setCurrentAuditorium] = useState<AdminAuditorium | null>(null)
   const [errors, setErrors] = useState<{ name?: string }>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
       if (auditorium) {
+        setCurrentAuditorium(auditorium)
         setFormData({
-          name: auditorium.name,
-          format: auditorium.format,
-          status: auditorium.status,
+          name: auditorium.name || '',
+          format: mapBackendFormatToFrontend(auditorium.format),
+          status: mapBackendAuditoriumStatusToFrontend(auditorium.status),
         })
+
+        // Gọi API lấy dữ liệu phòng mới nhất từ server
+        if (auditorium.id) {
+          setIsLoadingDetail(true)
+          theaterApiService
+            .getAuditoriumById(auditorium.id)
+            .then((fresh) => {
+              if (fresh) {
+                setCurrentAuditorium(fresh)
+                setFormData({
+                  name: fresh.name || '',
+                  format: mapBackendFormatToFrontend(fresh.format),
+                  status: mapBackendAuditoriumStatusToFrontend(fresh.status),
+                })
+              }
+            })
+            .catch((err) => {
+              console.error('Lỗi khi tải chi tiết phòng chiếu:', err)
+            })
+            .finally(() => {
+              setIsLoadingDetail(false)
+            })
+        }
       } else {
+        setCurrentAuditorium(null)
         setFormData({
           name: '',
           format: '2D',
           status: 'active',
         })
+        setIsLoadingDetail(false)
       }
       setErrors({})
       setIsSubmitting(false)
@@ -137,9 +170,14 @@ export function AuditoriumModal({
               <Tv className="w-5 h-5" />
             </div>
             <div>
-              <h2 id="auditorium-modal-title" className="text-base font-bold text-foreground">
-                {isEdit ? 'Chỉnh Sửa Phòng Chiếu' : 'Thêm Phòng Chiếu Mới'}
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 id="auditorium-modal-title" className="text-base font-bold text-foreground">
+                  {isEdit ? 'Chỉnh Sửa Phòng Chiếu' : 'Thêm Phòng Chiếu Mới'}
+                </h2>
+                {isLoadingDetail && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary shrink-0" />
+                )}
+              </div>
               <p className="text-xs text-muted-foreground line-clamp-1">
                 {theaterName}
               </p>
@@ -234,7 +272,9 @@ export function AuditoriumModal({
                 <span>Số lượng ghế ngồi:</span>
               </span>
               <span className="font-mono font-bold text-foreground bg-card/80 px-2 py-0.5 rounded-md border border-border/60">
-                {isEdit && auditorium ? `${auditorium.totalSeats} ghế` : 'Tính từ Sơ đồ ghế'}
+                {isEdit && (currentAuditorium || auditorium)
+                  ? `${(currentAuditorium || auditorium)?.totalSeats ?? 0} ghế`
+                  : 'Tính từ Sơ đồ ghế'}
               </span>
             </div>
             <p className="text-[11px] text-muted-foreground leading-relaxed">

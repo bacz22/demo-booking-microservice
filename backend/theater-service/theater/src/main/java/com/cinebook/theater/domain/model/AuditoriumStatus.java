@@ -1,5 +1,7 @@
 package com.cinebook.theater.domain.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+
 public enum AuditoriumStatus {
     ACTIVE("active"),
     MAINTENANCE("maintenance"),
@@ -15,6 +17,7 @@ public enum AuditoriumStatus {
         return value;
     }
 
+    @JsonCreator
     public static AuditoriumStatus from(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("Auditorium status must not be blank");

@@ -1,4 +1,4 @@
-export type AdminShowtimeStatus = 'selling' | 'sold-out' | 'ended' | 'cancelled'
+export type AdminShowtimeStatus = 'scheduled' | 'selling' | 'sold-out' | 'ended' | 'cancelled'
 
 export type ShowtimeTechnologyFormat =
   | '2D'
@@ -46,6 +46,7 @@ export interface ShowtimeFilterState {
   movieId: string
   dateFrom: string
   dateTo: string
+  date?: string
   format: string
   status: string
   sortBy: 'startTime' | 'date' | 'occupancy' | 'price'

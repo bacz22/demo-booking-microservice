@@ -1,5 +1,6 @@
 package com.cinebook.theater.domain.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;
 
@@ -27,6 +28,7 @@ public enum AuditoriumFormat {
         return displayName;
     }
 
+    @JsonCreator
     public static AuditoriumFormat from(String value) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException("Auditorium format must not be blank");

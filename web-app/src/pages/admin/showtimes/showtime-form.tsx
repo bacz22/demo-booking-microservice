@@ -21,16 +21,14 @@ import type {
 import type { AdminMovie } from '@/types/admin-movie'
 import type { AdminTheater, AdminAuditorium } from '@/types/admin-theater'
 import {
-  getAdminShowtimeById,
-  createAdminShowtime,
-  updateAdminShowtime,
-  checkShowtimeConflict,
+  showtimeApiService,
+  mapBackendShowtimeToAdminShowtime,
   calculateEndTime,
   timeToMinutes,
   minutesToTime,
-} from '@/mocks/admin/showtimes'
-import { getAdminTheaters, getAuditoriumsByTheaterId } from '@/mocks/admin/theaters'
-import { getAdminMovies } from '@/mocks/admin/movies'
+} from '@/services/showtime-api.service'
+import { theaterApiService } from '@/services/theater-api.service'
+import { movieApiService } from '@/services/movie-api.service'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -43,6 +41,7 @@ import {
 } from '@/components/ui/select'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { DatePicker, TimePicker } from '@/components/ui/date-picker'
 
 function formatVND(amount: number): string {
   return new Intl.NumberFormat('vi-VN', {
@@ -117,6 +116,9 @@ export default function AdminShowtimeForm() {
   const [initialDataJson, setInitialDataJson] = useState<string>('')
   const [errors, setErrors] = useState<ShowtimeFormErrors>({})
 
+  // Điều phối chỉ 1 popup (DatePicker hoặc TimePicker) mở tại một thời điểm
+  const [activePicker, setActivePicker] = useState<'date' | 'time' | null>(null)
+
   // Selected Movie details
   const selectedMovie = useMemo(() => {
     return movies.find((m) => m.id === formData.movieId)
@@ -131,14 +133,16 @@ export default function AdminShowtimeForm() {
   useEffect(() => {
     const loadPrerequisites = async () => {
       try {
-        const thRes = await getAdminTheaters({ pageSize: 100 })
-        setTheaters(thRes.items)
-
-        const mvRes = await getAdminMovies({ pageSize: 100 })
-        // Only showing or coming soon movies
-        setMovies(mvRes.items.filter((m) => m.status !== 'ended'))
+        const [thRes, mvRes] = await Promise.all([
+          theaterApiService.getAdminTheaters({ pageSize: 100 }),
+          movieApiService.getMovies({ pageSize: 100 }),
+        ])
+        setTheaters(thRes.items || [])
+        // Keep active movies (if editing, include all movies)
+        setMovies(mvRes.items || [])
       } catch (err) {
         console.error('Lỗi tải dữ liệu rạp và phim:', err)
+        toast.error('Không thể tải danh mục rạp và phim từ hệ thống')
       }
     }
     loadPrerequisites()
@@ -149,18 +153,25 @@ export default function AdminShowtimeForm() {
     let isCancelled = false
     const loadAuds = async () => {
       if (formData.theaterId) {
-        const auds = await getAuditoriumsByTheaterId(formData.theaterId)
-        if (!isCancelled) {
-          setAuditoriums(auds)
-          // If currently selected auditorium does not belong to new theater, reset it
-          if (formData.auditoriumId && !auds.some((a) => a.id === formData.auditoriumId)) {
-            setFormData((prev) => ({ ...prev, auditoriumId: '' }))
+        try {
+          const auds = await theaterApiService.getAuditoriumsByTheaterId(formData.theaterId)
+          if (!isCancelled) {
+            setAuditoriums(auds)
+            // If currently selected auditorium does not belong to new theater, reset it (only in create mode)
+            if (formData.auditoriumId && !auds.some((a) => a.id === formData.auditoriumId) && !isEdit) {
+              setFormData((prev) => ({ ...prev, auditoriumId: '' }))
+            }
           }
+        } catch (err) {
+          console.error('Lỗi tải phòng chiếu:', err)
+          if (!isCancelled) setAuditoriums([])
         }
       } else {
         if (!isCancelled) {
           setAuditoriums([])
-          setFormData((prev) => ({ ...prev, auditoriumId: '' }))
+          if (!isEdit) {
+            setFormData((prev) => ({ ...prev, auditoriumId: '' }))
+          }
         }
       }
     }
@@ -168,7 +179,7 @@ export default function AdminShowtimeForm() {
     return () => {
       isCancelled = true
     }
-  }, [formData.theaterId, formData.auditoriumId])
+  }, [formData.theaterId, isEdit])
 
   // If editing, load showtime data
   useEffect(() => {
@@ -195,11 +206,22 @@ export default function AdminShowtimeForm() {
     const fetchDetail = async () => {
       setIsLoading(true)
       try {
-        const st = await getAdminShowtimeById(showtimeId)
-        if (!st) {
+        const rawSt = await showtimeApiService.getAdminShowtimeById(showtimeId)
+        if (!rawSt) {
           toast.error('Không tìm thấy suất chiếu')
           navigate('/admin/showtimes')
           return
+        }
+
+        const st = mapBackendShowtimeToAdminShowtime(rawSt)
+
+        if (st.theaterId) {
+          try {
+            const auds = await theaterApiService.getAuditoriumsByTheaterId(st.theaterId)
+            setAuditoriums(auds)
+          } catch (e) {
+            console.error('Lỗi tải phòng chiếu:', e)
+          }
         }
 
         const data: ShowtimeFormData = {
@@ -218,8 +240,8 @@ export default function AdminShowtimeForm() {
 
         setFormData(data)
         setInitialDataJson(JSON.stringify(data))
-      } catch {
-        toast.error('Lỗi khi tải thông tin suất chiếu')
+      } catch (err: any) {
+        toast.error(err?.message || 'Lỗi khi tải thông tin suất chiếu')
       } finally {
         setIsLoading(false)
       }
@@ -243,19 +265,59 @@ export default function AdminShowtimeForm() {
     return minutesToTime(endMin + (formData.cleaningBufferMinutes || 15))
   }, [formData.endTime, formData.cleaningBufferMinutes])
 
+  // Existing showtimes of selected auditorium & date for live client hint
+  const [existingShowtimes, setExistingShowtimes] = useState<any[]>([])
+
+  useEffect(() => {
+    if (!formData.auditoriumId || !formData.date) {
+      setExistingShowtimes([])
+      return
+    }
+    let isCancelled = false
+    showtimeApiService
+      .getAdminShowtimes({
+        auditoriumId: formData.auditoriumId,
+        dateFrom: formData.date,
+        pageSize: 100,
+      })
+      .then((res) => {
+        if (!isCancelled) {
+          setExistingShowtimes(res.items || [])
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) setExistingShowtimes([])
+      })
+    return () => {
+      isCancelled = true
+    }
+  }, [formData.auditoriumId, formData.date])
+
   // Live Conflict Check
   const conflictInfo = useMemo(() => {
     if (!formData.auditoriumId || !formData.date || !formData.startTime || !formData.endTime) {
       return { hasConflict: false }
     }
-    return checkShowtimeConflict(
-      formData.auditoriumId,
-      formData.date,
-      formData.startTime,
-      formData.endTime,
-      showtimeId
-    )
-  }, [formData.auditoriumId, formData.date, formData.startTime, formData.endTime, showtimeId])
+    const newStart = timeToMinutes(formData.startTime)
+    const newEndWithBuffer = timeToMinutes(formData.endTime) + (formData.cleaningBufferMinutes || 15)
+
+    for (const st of existingShowtimes) {
+      if (showtimeId && st.id === showtimeId) continue
+      if (st.status === 'cancelled') continue
+
+      const stStart = timeToMinutes(st.startTime)
+      const stEndWithBuffer = timeToMinutes(st.endTime) + (st.cleaningBufferMinutes || 15)
+
+      if (Math.max(newStart, stStart) < Math.min(newEndWithBuffer, stEndWithBuffer)) {
+        return {
+          hasConflict: true,
+          reason: `Trùng khung giờ với suất "${st.movieTitle}" (${st.startTime} - ${st.endTime}, phòng sẵn sàng lúc ${minutesToTime(stEndWithBuffer)} sau dọn phòng).`,
+        }
+      }
+    }
+
+    return { hasConflict: false }
+  }, [formData.auditoriumId, formData.date, formData.startTime, formData.endTime, formData.cleaningBufferMinutes, existingShowtimes, showtimeId])
 
   // Dirty check
   const isDirty = useMemo(() => {
@@ -310,17 +372,31 @@ export default function AdminShowtimeForm() {
       setIsSubmitting(true)
 
       if (isEdit && showtimeId) {
-        await updateAdminShowtime(showtimeId, formData)
+        await showtimeApiService.updateShowtime(showtimeId, formData)
         toast.success('Đã cập nhật suất chiếu thành công!')
       } else {
-        await createAdminShowtime(formData)
+        await showtimeApiService.createShowtime(formData)
         toast.success('Đã tạo suất chiếu mới thành công!')
       }
 
       setInitialDataJson(JSON.stringify(formData))
       navigate('/admin/showtimes')
-    } catch {
-      toast.error('Có lỗi xảy ra khi lưu suất chiếu. Vui lòng thử lại.')
+    } catch (err: any) {
+      console.error('Lỗi khi lưu suất chiếu:', err)
+      if (err?.code === 'SHOWTIME_OVERLAP') {
+        toast.error(err.message || 'Phòng chiếu đã có suất chiếu khác trong khung giờ này (trùng lịch)!')
+        setErrors((prev) => ({ ...prev, startTime: err.message || 'Trùng lịch chiếu với suất khác' }))
+      } else if (err?.code === 'MOVIE_NOT_FOUND') {
+        toast.error('Phim được chọn không tồn tại hoặc đã bị gỡ khỏi hệ thống!')
+        setErrors((prev) => ({ ...prev, movieId: 'Phim không tồn tại trên hệ thống' }))
+      } else if (err?.code === 'SHOWTIME_IN_PAST') {
+        toast.error('Thời gian bắt đầu suất chiếu không thể ở trong quá khứ!')
+        setErrors((prev) => ({ ...prev, startTime: 'Thời gian bắt đầu không thể ở quá khứ' }))
+      } else if (err?.code === 'INVALID_SHOWTIME_STATE') {
+        toast.error(err.message || 'Chỉ có thể chỉnh sửa khi suất chiếu ở trạng thái SCHEDULED!')
+      } else {
+        toast.error(err?.message || 'Có lỗi xảy ra khi lưu suất chiếu. Vui lòng thử lại.')
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -385,6 +461,15 @@ export default function AdminShowtimeForm() {
             </h2>
           </div>
 
+          {isEdit && (
+            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-2">
+              <Info className="w-4 h-4 shrink-0" />
+              <span>
+                Suất chiếu đã lên lịch không hỗ trợ đổi phim hoặc phòng chiếu. Bạn có thể điều chỉnh thời gian bắt đầu, thời gian dọn phòng và giá vé bên dưới.
+              </span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {/* Movie Select */}
             <div className="space-y-1.5 md:col-span-2">
@@ -397,6 +482,7 @@ export default function AdminShowtimeForm() {
                   setFormData((prev) => ({ ...prev, movieId: val }))
                   if (errors.movieId) setErrors((prev) => ({ ...prev, movieId: undefined }))
                 }}
+                disabled={isEdit}
               >
                 <SelectTrigger className="h-10 text-xs rounded-xl border-border/70 bg-background">
                   <SelectValue placeholder="-- Chọn phim chiếu rạp --" />
@@ -454,6 +540,7 @@ export default function AdminShowtimeForm() {
               <Select
                 value={formData.format}
                 onValueChange={(val: any) => setFormData((prev) => ({ ...prev, format: val }))}
+                disabled={isEdit}
               >
                 <SelectTrigger className="h-10 text-xs rounded-xl border-border/70 bg-background">
                   <SelectValue />
@@ -476,6 +563,7 @@ export default function AdminShowtimeForm() {
               <Select
                 value={formData.language}
                 onValueChange={(val: any) => setFormData((prev) => ({ ...prev, language: val }))}
+                disabled={isEdit}
               >
                 <SelectTrigger className="h-10 text-xs rounded-xl border-border/70 bg-background">
                   <SelectValue />
@@ -513,6 +601,7 @@ export default function AdminShowtimeForm() {
                   setFormData((prev) => ({ ...prev, theaterId: val }))
                   if (errors.theaterId) setErrors((prev) => ({ ...prev, theaterId: undefined }))
                 }}
+                disabled={isEdit}
               >
                 <SelectTrigger className="h-10 text-xs rounded-xl border-border/70 bg-background">
                   <SelectValue placeholder="-- Chọn cụm rạp --" />
@@ -545,7 +634,7 @@ export default function AdminShowtimeForm() {
                   if (errors.auditoriumId)
                     setErrors((prev) => ({ ...prev, auditoriumId: undefined }))
                 }}
-                disabled={!formData.theaterId}
+                disabled={isEdit || !formData.theaterId}
               >
                 <SelectTrigger className="h-10 text-xs rounded-xl border-border/70 bg-background">
                   <SelectValue
@@ -599,15 +688,19 @@ export default function AdminShowtimeForm() {
               <label className="text-xs font-semibold text-foreground">
                 Ngày chiếu <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="date"
-                min={isEdit ? undefined : todayStr}
+              <DatePicker
                 value={formData.date}
-                onChange={(e) => {
-                  setFormData((prev) => ({ ...prev, date: e.target.value }))
+                onChange={(date) => {
+                  setFormData((prev) => ({ ...prev, date }))
                   if (errors.date) setErrors((prev) => ({ ...prev, date: undefined }))
                 }}
-                className="w-full h-10 px-3 rounded-xl border border-border/70 bg-background text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                minDate={isEdit ? undefined : todayStr}
+                placeholder="Chọn ngày chiếu..."
+                error={Boolean(errors.date)}
+                clearable={false}
+                toYear={new Date().getFullYear() + 3}
+                open={activePicker === 'date'}
+                onOpenChange={(open) => setActivePicker(open ? 'date' : null)}
               />
               {errors.date && <p className="text-[11px] text-rose-500">{errors.date}</p>}
             </div>
@@ -617,14 +710,16 @@ export default function AdminShowtimeForm() {
               <label className="text-xs font-semibold text-foreground">
                 Giờ bắt đầu chiếu <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="time"
+              <TimePicker
                 value={formData.startTime}
-                onChange={(e) => {
-                  setFormData((prev) => ({ ...prev, startTime: e.target.value }))
+                onChange={(time) => {
+                  setFormData((prev) => ({ ...prev, startTime: time }))
                   if (errors.startTime) setErrors((prev) => ({ ...prev, startTime: undefined }))
                 }}
-                className="w-full h-10 px-3 rounded-xl border border-border/70 bg-background text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="Chọn giờ bắt đầu..."
+                error={Boolean(errors.startTime)}
+                open={activePicker === 'time'}
+                onOpenChange={(open) => setActivePicker(open ? 'time' : null)}
               />
               {errors.startTime && <p className="text-[11px] text-rose-500">{errors.startTime}</p>}
             </div>
@@ -634,11 +729,21 @@ export default function AdminShowtimeForm() {
               <label className="text-xs font-semibold text-foreground">
                 Giờ kết thúc (tính tự động)
               </label>
-              <div className="w-full h-10 px-3 rounded-xl border border-border/40 bg-secondary/30 flex items-center font-mono text-xs font-bold text-primary">
-                {formData.endTime || '--:--'}
+              <div className="w-full h-10 px-3.5 rounded-xl border border-border/60 bg-muted/40 flex items-center justify-between text-xs text-foreground">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-muted-foreground" />
+                  <span className="font-mono font-bold text-sm text-foreground">
+                    {formData.endTime || '--:--'}
+                  </span>
+                </div>
+                {formData.endTime && (
+                  <span className="text-[11px] font-semibold text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-lg">
+                    +{selectedMovie?.duration || 0} phút
+                  </span>
+                )}
               </div>
               <p className="text-[10px] text-muted-foreground">
-                = Giờ bắt đầu + {selectedMovie?.duration || 0} phút phim
+                = Giờ bắt đầu + {selectedMovie?.duration || 0} phút thời lượng phim
               </p>
             </div>
           </div>
@@ -757,40 +862,38 @@ export default function AdminShowtimeForm() {
 
         {/* 5. Sticky Action Footer */}
         <div className="fixed bottom-0 left-0 right-0 z-30 bg-background/95 backdrop-blur-md border-t border-border p-4">
-          <div className="max-w-4xl mx-auto flex items-center justify-between gap-4">
+          <div className="max-w-4xl mx-auto flex items-center justify-center gap-3 relative">
+            {conflictInfo.hasConflict && (
+              <span className="absolute left-0 text-xs font-bold text-amber-500 flex items-center gap-1 hidden md:flex">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>Có cảnh báo xung đột giờ</span>
+              </span>
+            )}
+
             <Button
               type="button"
               variant="outline"
               onClick={handleBack}
               disabled={isSubmitting}
-              className="cursor-pointer text-xs"
+              className="cursor-pointer text-xs rounded-xl px-6 h-10 font-medium"
             >
               Hủy bỏ
             </Button>
 
-            <div className="flex items-center gap-3">
-              {conflictInfo.hasConflict && (
-                <span className="text-xs font-bold text-amber-500 flex items-center gap-1">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Có cảnh báo xung đột giờ</span>
-                </span>
+            <Button
+              type="submit"
+              disabled={isSubmitting}
+              className="cursor-pointer text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 min-w-[150px] rounded-xl font-bold shadow-xs px-6 h-10"
+            >
+              {isSubmitting ? (
+                <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5" />
+                  <span>{isEdit ? 'Lưu thay đổi' : 'Tạo suất chiếu'}</span>
+                </>
               )}
-
-              <Button
-                type="submit"
-                disabled={isSubmitting}
-                className="cursor-pointer text-xs gap-1.5 bg-primary text-primary-foreground hover:bg-primary/90 min-w-[150px]"
-              >
-                {isSubmitting ? (
-                  <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>
-                    <Save className="w-3.5 h-3.5" />
-                    <span>{isEdit ? 'Lưu thay đổi' : 'Tạo suất chiếu'}</span>
-                  </>
-                )}
-              </Button>
-            </div>
+            </Button>
           </div>
         </div>
       </form>

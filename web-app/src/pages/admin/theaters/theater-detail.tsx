@@ -18,6 +18,7 @@ import {
   Grid3X3,
   MoreVertical,
   SlidersHorizontal,
+  Loader2,
 } from 'lucide-react'
 import type {
   AdminTheater,
@@ -26,15 +27,8 @@ import type {
   AuditoriumStatus,
   AuditoriumFormData,
 } from '@/types/admin-theater'
-import {
-  getAdminTheaterById,
-  getAuditoriumsByTheaterId,
-  createAuditorium,
-  updateAuditorium,
-  updateAuditoriumStatus,
-  updateTheaterStatus,
-  getTodayShowtimesByTheater,
-} from '@/mocks/admin/theaters'
+import { theaterApiService } from '@/services/theater-api.service'
+import { showtimeApiService } from '@/services/showtime-api.service'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AuditoriumModal } from '@/components/admin/theaters/auditorium-modal'
 import { Button } from '@/components/ui/button'
@@ -45,6 +39,24 @@ import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 type DetailTab = 'auditoriums' | 'showtimes' | 'info'
+
+function formatDateTime(isoString?: string): string {
+  if (!isoString) return '-'
+  try {
+    const d = new Date(isoString)
+    if (isNaN(d.getTime())) return isoString
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const hours = pad(d.getHours())
+    const minutes = pad(d.getMinutes())
+    const seconds = pad(d.getSeconds())
+    const day = pad(d.getDate())
+    const month = pad(d.getMonth() + 1)
+    const year = d.getFullYear()
+    return `${hours}:${minutes}:${seconds} - ${day}/${month}/${year}`
+  } catch {
+    return isoString || '-'
+  }
+}
 
 export default function AdminTheaterDetail() {
   const { theaterId } = useParams<{ theaterId: string }>()
@@ -65,6 +77,30 @@ export default function AdminTheaterDetail() {
     targetAuditorium: null,
   })
 
+  // Loading state when clicking edit auditorium to fetch fresh data from API
+  const [loadingAudId, setLoadingAudId] = useState<string | null>(null)
+
+  // Open Edit Auditorium Modal with fresh API data
+  const handleOpenEditAuditorium = async (aud: AdminAuditorium) => {
+    try {
+      setLoadingAudId(aud.id)
+      const freshAud = await theaterApiService.getAuditoriumById(aud.id)
+      setAuditoriumModalState({
+        isOpen: true,
+        targetAuditorium: freshAud,
+      })
+    } catch (err: any) {
+      console.error('Lỗi khi tải chi tiết phòng chiếu:', err)
+      // Fallback to table data if API error occurs
+      setAuditoriumModalState({
+        isOpen: true,
+        targetAuditorium: aud,
+      })
+    } finally {
+      setLoadingAudId(null)
+    }
+  }
+
   // Quick Action menu ID for auditoriums
   const [openAudMenuId, setOpenAudMenuId] = useState<string | null>(null)
 
@@ -73,10 +109,14 @@ export default function AdminTheaterDetail() {
     if (!theaterId) return
     try {
       setIsLoading(true)
-      const [t, auds, sts] = await Promise.all([
-        getAdminTheaterById(theaterId),
-        getAuditoriumsByTheaterId(theaterId),
-        getTodayShowtimesByTheater(theaterId),
+      const todayStr = new Date().toISOString().split('T')[0]
+      const [t, auds, showtimesResult] = await Promise.all([
+        theaterApiService.getAdminTheaterById(theaterId),
+        theaterApiService.getAuditoriumsByTheaterId(theaterId),
+        showtimeApiService
+          .getAdminShowtimes({ theaterId, dateFrom: todayStr })
+          .then((res) => res.items)
+          .catch(() => []),
       ])
 
       if (!t) {
@@ -87,10 +127,10 @@ export default function AdminTheaterDetail() {
 
       setTheater(t)
       setAuditoriums(auds)
-      setTodayShowtimes(sts)
-    } catch (err) {
+      setTodayShowtimes(showtimesResult)
+    } catch (err: any) {
       console.error(err)
-      toast.error('Không thể tải dữ liệu chi tiết cụm rạp')
+      toast.error(err?.message || 'Không thể tải dữ liệu chi tiết cụm rạp')
     } finally {
       setIsLoading(false)
     }
@@ -103,8 +143,8 @@ export default function AdminTheaterDetail() {
   // Quick Theater Status update
   const handleQuickTheaterStatus = async (status: AdminTheaterStatus) => {
     if (!theater) return
-    const success = await updateTheaterStatus(theater.id, status)
-    if (success) {
+    try {
+      await theaterApiService.updateTheaterStatus(theater.id, theater, status)
       toast.success(
         status === 'active'
           ? `Đã kích hoạt hoạt động cho rạp "${theater.name}"!`
@@ -113,6 +153,8 @@ export default function AdminTheaterDetail() {
             : `Đã tạm ngưng vận hành rạp "${theater.name}"!`
       )
       loadData()
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể cập nhật trạng thái cụm rạp')
     }
   }
 
@@ -120,22 +162,26 @@ export default function AdminTheaterDetail() {
   const handleSaveAuditorium = async (data: AuditoriumFormData) => {
     if (!theater) return
 
-    if (auditoriumModalState.targetAuditorium) {
-      // Update
-      const updated = await updateAuditorium(
-        auditoriumModalState.targetAuditorium.id,
-        data
-      )
-      if (updated) {
-        toast.success(`Đã cập nhật thông tin phòng "${updated.name}" thành công!`)
+    try {
+      if (auditoriumModalState.targetAuditorium) {
+        // Update
+        const updated = await theaterApiService.updateAuditorium(
+          auditoriumModalState.targetAuditorium.id,
+          data
+        )
+        if (updated) {
+          toast.success(`Đã cập nhật thông tin phòng "${updated.name}" thành công!`)
+        }
+      } else {
+        // Create
+        const created = await theaterApiService.createAuditorium(theater.id, data)
+        toast.success(`Đã thêm phòng chiếu mới "${created.name}" thành công!`)
       }
-    } else {
-      // Create
-      const created = await createAuditorium(theater.id, data)
-      toast.success(`Đã thêm phòng chiếu mới "${created.name}" thành công!`)
-    }
 
-    loadData()
+      loadData()
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể lưu thông tin phòng chiếu')
+    }
   }
 
   // Quick Auditorium Status update
@@ -144,16 +190,22 @@ export default function AdminTheaterDetail() {
     status: AuditoriumStatus
   ) => {
     setOpenAudMenuId(null)
-    const success = await updateAuditoriumStatus(aud.id, status)
-    if (success) {
+    try {
+      const updated = await theaterApiService.updateAuditorium(aud.id, {
+        name: aud.name,
+        format: aud.format,
+        status,
+      })
       toast.success(
         status === 'active'
-          ? `Phòng "${aud.name}" đã sẵn sàng hoạt động!`
+          ? `Phòng "${updated.name}" đã sẵn sàng hoạt động!`
           : status === 'maintenance'
-            ? `Phòng "${aud.name}" chuyển sang bảo trì!`
-            : `Đã tạm dừng vận hành phòng "${aud.name}"!`
+            ? `Phòng "${updated.name}" chuyển sang bảo trì!`
+            : `Đã tạm dừng vận hành phòng "${updated.name}"!`
       )
       loadData()
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể cập nhật trạng thái phòng chiếu')
     }
   }
 
@@ -405,14 +457,6 @@ export default function AdminTheaterDetail() {
               icon={Tv}
               title="Chưa có phòng chiếu nào"
               description="Cụm rạp này hiện chưa được cấu hình phòng chiếu. Hãy thêm phòng chiếu đầu tiên."
-              action={{
-                label: 'Thêm phòng chiếu ngay',
-                onClick: () =>
-                  setAuditoriumModalState({
-                    isOpen: true,
-                    targetAuditorium: null,
-                  }),
-              }}
               className="py-12 bg-card rounded-2xl border border-border/70"
             />
           ) : (
@@ -459,9 +503,6 @@ export default function AdminTheaterDetail() {
                               <Tv className="w-4 h-4 text-primary shrink-0" />
                               <span>{aud.name}</span>
                             </div>
-                            <span className="text-[10px] text-muted-foreground/70 font-mono pl-6">
-                              ID: {aud.id}
-                            </span>
                           </td>
 
                           {/* Technology Format */}
@@ -530,16 +571,16 @@ export default function AdminTheaterDetail() {
                                 type="button"
                                 variant="ghost"
                                 size="sm"
-                                onClick={() =>
-                                  setAuditoriumModalState({
-                                    isOpen: true,
-                                    targetAuditorium: aud,
-                                  })
-                                }
+                                disabled={loadingAudId === aud.id}
+                                onClick={() => handleOpenEditAuditorium(aud)}
                                 className="h-7 text-xs rounded-lg text-muted-foreground hover:text-foreground cursor-pointer px-2"
                                 title="Sửa tên hoặc định dạng phòng chiếu"
                               >
-                                <Pencil className="w-3.5 h-3.5" />
+                                {loadingAudId === aud.id ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                                ) : (
+                                  <Pencil className="w-3.5 h-3.5" />
+                                )}
                               </Button>
 
                               {/* Quick Action Popover */}
@@ -805,7 +846,7 @@ export default function AdminTheaterDetail() {
                 <div className="pt-3 flex justify-between gap-4">
                   <span className="text-muted-foreground font-medium">Thời điểm thành lập:</span>
                   <span className="font-mono text-muted-foreground text-right">
-                    {theater.createdAt}
+                    {formatDateTime(theater.createdAt)}
                   </span>
                 </div>
               </div>
@@ -848,18 +889,6 @@ export default function AdminTheaterDetail() {
                 />
               </div>
             </div>
-
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="w-full rounded-xl text-xs gap-1.5 h-10 cursor-pointer font-bold"
-            >
-              <Link to={`/admin/theaters/${theater.id}/edit`}>
-                <Pencil className="w-3.5 h-3.5" />
-                <span>Chỉnh sửa thông tin rạp này</span>
-              </Link>
-            </Button>
           </div>
         </div>
       )}

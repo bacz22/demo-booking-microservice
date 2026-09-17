@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Calendar,
@@ -15,20 +15,23 @@ import {
   Eye,
   Edit,
   Ban,
+  Trash2,
+  PlayCircle,
+  CheckCircle,
+  MoreVertical,
 } from 'lucide-react'
 import type {
   AdminShowtime,
   ShowtimeFilterState,
 } from '@/types/admin-showtime'
 import type { AdminMovie } from '@/types/admin-movie'
-import type { AdminTheater, AdminAuditorium } from '@/types/admin-theater'
+import type { AdminTheater, AdminAuditorium, AuditoriumFormat } from '@/types/admin-theater'
 import {
-  getAdminShowtimes,
-  cancelAdminShowtime,
+  showtimeApiService,
   timeToMinutes,
-} from '@/mocks/admin/showtimes'
-import { getAdminTheaters, getAuditoriumsByTheaterId } from '@/mocks/admin/theaters'
-import { getAdminMovies } from '@/mocks/admin/movies'
+} from '@/services/showtime-api.service'
+import { theaterApiService } from '@/services/theater-api.service'
+import { movieApiService } from '@/services/movie-api.service'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
 import { AdminPagination } from '@/components/admin/common/admin-pagination'
@@ -43,6 +46,8 @@ import {
 } from '@/components/ui/select'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+import { DatePicker } from '@/components/ui/date-picker'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 
 // Helpers
 function formatVND(amount: number): string {
@@ -79,16 +84,23 @@ export default function AdminShowtimeList() {
   const [showtimes, setShowtimes] = useState<AdminShowtime[]>([])
   const [totalItems, setTotalItems] = useState(0)
   const [totalPages, setTotalPages] = useState(1)
-  const [isLoading, setIsLoading] = useState(true)
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [isFiltering, setIsFiltering] = useState(false)
+  const hasLoadedInitial = useRef(false)
 
   // Options for filters
   const [theaters, setTheaters] = useState<AdminTheater[]>([])
   const [auditoriums, setAuditoriums] = useState<AdminAuditorium[]>([])
   const [movies, setMovies] = useState<AdminMovie[]>([])
+  const [extraMovies, setExtraMovies] = useState<Record<string, AdminMovie>>({})
 
   // Cancel dialog state
   const [cancellingShowtime, setCancellingShowtime] = useState<AdminShowtime | null>(null)
   const [isCancelling, setIsCancelling] = useState(false)
+
+  // Delete dialog state
+  const [deletingShowtime, setDeletingShowtime] = useState<AdminShowtime | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Active timeline date
   const [timelineDate, setTimelineDate] = useState<string>(() => {
@@ -101,6 +113,12 @@ export default function AdminShowtimeList() {
 
   // Selected showtime in timeline popover
   const [activeTimelineItem, setActiveTimelineItem] = useState<AdminShowtime | null>(null)
+
+  // Điều phối 2 DatePicker lọc ngày — chỉ 1 picker mở tại một thời điểm
+  const [activeDatePicker, setActiveDatePicker] = useState<'from' | 'to' | null>(null)
+
+  // ID suất chiếu đang mở menu thao tác 3 chấm
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null)
 
   // Filter state
   const filters: ShowtimeFilterState = useMemo(() => {
@@ -134,25 +152,57 @@ export default function AdminShowtimeList() {
     return count
   }, [filters])
 
-  // Update query params helper
-  const updateFilter = useCallback(
-    (key: keyof ShowtimeFilterState, value: string | number) => {
-      const newParams = new URLSearchParams(searchParams)
-      if (value === '' || value === 'all' || value === undefined) {
-        newParams.delete(key)
-      } else {
-        newParams.set(key, String(value))
-      }
-      // Reset to page 1 on filter changes
-      if (key !== 'page' && key !== 'pageSize') {
-        newParams.delete('page')
-      }
-      setSearchParams(newParams, { replace: true })
+  // Update query params helper (stable reference across renders)
+  const updateFilters = useCallback(
+    (updates: Partial<Record<keyof ShowtimeFilterState, string | number | undefined | null>>) => {
+      setSearchParams(
+        (prev) => {
+          const newParams = new URLSearchParams(prev)
+          Object.entries(updates).forEach(([key, value]) => {
+            if (value === '' || value === 'all' || value === undefined || value === null) {
+              newParams.delete(key)
+            } else {
+              newParams.set(key, String(value))
+            }
+          })
+          // Reset to page 1 on filter changes unless page or pageSize is explicitly updated
+          if (!('page' in updates) && !('pageSize' in updates)) {
+            newParams.delete('page')
+          }
+          return newParams
+        },
+        { replace: true }
+      )
     },
-    [searchParams, setSearchParams]
+    [setSearchParams]
   )
 
+  const updateFilter = useCallback(
+    (key: keyof ShowtimeFilterState, value: string | number | undefined | null) => {
+      updateFilters({ [key]: value })
+    },
+    [updateFilters]
+  )
+
+
+  // Local search input for smooth debounced typing without table thrashing
+  const [searchInput, setSearchInput] = useState(filters.search)
+
+  useEffect(() => {
+    setSearchInput(filters.search)
+  }, [filters.search])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (searchInput !== filters.search) {
+        updateFilter('search', searchInput)
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchInput, filters.search, updateFilter])
+
   const handleResetFilters = () => {
+    setSearchInput('')
     const newParams = new URLSearchParams()
     if (viewMode === 'timeline') newParams.set('view', 'timeline')
     setSearchParams(newParams, { replace: true })
@@ -162,13 +212,15 @@ export default function AdminShowtimeList() {
   useEffect(() => {
     const loadPrerequisites = async () => {
       try {
-        const thRes = await getAdminTheaters({ pageSize: 100 })
-        setTheaters(thRes.items)
-
-        const mvRes = await getAdminMovies({ pageSize: 100 })
-        setMovies(mvRes.items)
+        const [thRes, mvRes] = await Promise.all([
+          theaterApiService.getAdminTheaters({ pageSize: 100 }),
+          movieApiService.getMovies({ pageSize: 100 }),
+        ])
+        setTheaters(thRes.items || [])
+        setMovies(mvRes.items || [])
       } catch (err) {
         console.error('Lỗi khi tải danh mục rạp và phim:', err)
+        toast.error('Không thể tải danh mục rạp và phim từ hệ thống')
       }
     }
     loadPrerequisites()
@@ -179,49 +231,203 @@ export default function AdminShowtimeList() {
     let isCancelled = false
     const loadAuds = async () => {
       if (filters.theaterId) {
-        const auds = await getAuditoriumsByTheaterId(filters.theaterId)
-        if (!isCancelled) {
-          setAuditoriums(auds)
-          if (filters.auditoriumId && !auds.some((a) => a.id === filters.auditoriumId)) {
-            updateFilter('auditoriumId', '')
+        try {
+          const auds = await theaterApiService.getAuditoriumsByTheaterId(filters.theaterId)
+          if (!isCancelled) {
+            setAuditoriums(auds)
           }
+        } catch (err) {
+          console.error('Lỗi tải phòng chiếu:', err)
+          if (!isCancelled) setAuditoriums([])
         }
       } else {
-        const rawAuds = localStorage.getItem('cinebook_admin_auditoriums')
-        const allAuds: AdminAuditorium[] = rawAuds ? JSON.parse(rawAuds) : []
-        if (!isCancelled) setAuditoriums(allAuds)
+        if (!isCancelled) setAuditoriums([])
       }
     }
     loadAuds()
     return () => {
       isCancelled = true
     }
-  }, [filters.theaterId, filters.auditoriumId, updateFilter])
+  }, [filters.theaterId])
 
   // Load showtimes
   const loadShowtimes = useCallback(async () => {
-    setIsLoading(true)
+    if (!hasLoadedInitial.current) {
+      setIsInitialLoading(true)
+    } else {
+      setIsFiltering(true)
+    }
+
     try {
-      const res = await getAdminShowtimes({
+      const res = await showtimeApiService.getAdminShowtimes({
         ...filters,
         pageSize: viewMode === 'timeline' ? 100 : filters.pageSize,
-        dateFrom: viewMode === 'timeline' ? timelineDate : filters.dateFrom,
-        dateTo: viewMode === 'timeline' ? timelineDate : filters.dateTo,
+        date: viewMode === 'timeline' ? timelineDate : undefined,
+        dateFrom: viewMode === 'timeline' ? undefined : (filters.dateFrom || undefined),
+        dateTo: viewMode === 'timeline' ? undefined : (filters.dateTo || undefined),
       })
-      setShowtimes(res.items)
+
+      setShowtimes(res.items || [])
       setTotalItems(res.totalItems)
       setTotalPages(res.totalPages)
-    } catch (err) {
+      hasLoadedInitial.current = true
+    } catch (err: any) {
       console.error('Lỗi tải danh sách suất chiếu:', err)
-      toast.error('Không thể tải danh sách suất chiếu')
+      toast.error(err?.message || 'Không thể tải danh sách suất chiếu')
     } finally {
-      setIsLoading(false)
+      setIsInitialLoading(false)
+      setIsFiltering(false)
     }
-  }, [filters, viewMode, timelineDate])
+  }, [
+    // filters.search được tách ra để tìm kiếm tức thì ở Client, không gọi API refetch gây giật lag
+    filters.theaterId,
+    filters.auditoriumId,
+    filters.movieId,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.format,
+    filters.status,
+    filters.sortBy,
+    filters.sortOrder,
+    filters.page,
+    filters.pageSize,
+    viewMode,
+    timelineDate,
+  ])
 
   useEffect(() => {
     loadShowtimes()
   }, [loadShowtimes])
+
+  // Tự động nạp chi tiết các phim bị thiếu (nếu có movieId nằm ngoài danh sách 100 phim ban đầu)
+  useEffect(() => {
+    if (showtimes.length === 0) return
+    const missingIds = Array.from(
+      new Set(
+        showtimes
+          .map((st) => st.movieId)
+          .filter(
+            (id) =>
+              Boolean(id) &&
+              !movies.some((m) => m.id.toLowerCase() === id.toLowerCase()) &&
+              !extraMovies[id.toLowerCase()]
+          )
+      )
+    )
+
+    if (missingIds.length === 0) return
+
+    missingIds.forEach(async (id) => {
+      try {
+        const mv = await movieApiService.getMovieById(id)
+        if (mv) {
+          setExtraMovies((prev) => ({ ...prev, [id.toLowerCase()]: mv }))
+        }
+      } catch (err) {
+        console.warn(`Không thể lấy thông tin phim ${id}:`, err)
+      }
+    })
+  }, [showtimes, movies, extraMovies])
+
+  // Enhance showtimes with movie title, poster, duration & age rating from loaded movies
+  const enhancedShowtimes = useMemo(() => {
+    return showtimes.map((st) => {
+      const mv =
+        movies.find((m) => m.id.toLowerCase() === st.movieId?.toLowerCase()) ||
+        (st.movieId ? extraMovies[st.movieId.toLowerCase()] : undefined)
+
+      return {
+        ...st,
+        movieTitle: mv?.title || st.movieTitle || (st.movieId ? `Phim #${st.movieId.slice(0, 8)}` : 'Chưa đặt tên'),
+        moviePosterUrl: st.moviePosterUrl || mv?.posterUrl || '',
+        movieAgeRating: st.movieAgeRating || mv?.ageRating || 'P',
+        movieDuration: st.movieDuration || mv?.duration || 120,
+      }
+    })
+  }, [showtimes, movies, extraMovies])
+
+  // Lọc tìm kiếm và ngày tức thì phía Client để giao diện mượt mà 60fps, không bị giật lag hay nhấp nháy
+  const filteredShowtimes = useMemo(() => {
+    let list = [...enhancedShowtimes]
+
+    // 1. Tìm kiếm tức thì không độ trễ theo từ khóa (tên phim, rạp, phòng, định dạng)
+    const query = searchInput.trim().toLowerCase()
+    if (query) {
+      list = list.filter((st) => {
+        const matchTitle = (st.movieTitle || '').toLowerCase().includes(query)
+        const matchTheater = (st.theaterName || '').toLowerCase().includes(query)
+        const matchAuditorium = (st.auditoriumName || '').toLowerCase().includes(query)
+        const matchFormat = (st.format || '').toLowerCase().includes(query)
+        return matchTitle || matchTheater || matchAuditorium || matchFormat
+      })
+    }
+
+    // 2. Lọc cụm rạp
+    if (filters.theaterId && filters.theaterId !== 'all') {
+      list = list.filter((st) => st.theaterId?.toLowerCase() === filters.theaterId.toLowerCase())
+    }
+
+    // 3. Lọc phòng chiếu
+    if (filters.auditoriumId && filters.auditoriumId !== 'all') {
+      list = list.filter((st) => st.auditoriumId?.toLowerCase() === filters.auditoriumId.toLowerCase())
+    }
+
+    // 4. Lọc phim
+    if (filters.movieId && filters.movieId !== 'all') {
+      list = list.filter((st) => st.movieId?.toLowerCase() === filters.movieId.toLowerCase())
+    }
+
+    // 5. Lọc định dạng phòng chiếu (2D, 3D, IMAX Laser, 4DX, ScreenX, Dolby Atmos)
+    if (filters.format && filters.format !== 'all') {
+      list = list.filter((st) => st.format === filters.format)
+    }
+
+    // 6. Lọc trạng thái (scheduled, selling, ended, cancelled)
+    if (filters.status && filters.status !== 'all') {
+      list = list.filter((st) => st.status === filters.status)
+    }
+
+    // 7. Lọc biên ngày chiếu (nếu có chọn từ ngày / đến ngày)
+    if (filters.dateFrom) {
+      list = list.filter((st) => !st.date || st.date >= filters.dateFrom)
+    }
+    if (filters.dateTo) {
+      list = list.filter((st) => !st.date || st.date <= filters.dateTo)
+    }
+
+    // 8. Sắp xếp danh sách
+    list.sort((a, b) => {
+      const order = filters.sortOrder === 'desc' ? -1 : 1
+      if (filters.sortBy === 'date' || filters.sortBy === 'startTime') {
+        const dateA = `${a.date || ''}T${a.startTime || ''}`
+        const dateB = `${b.date || ''}T${b.startTime || ''}`
+        return dateA.localeCompare(dateB) * order
+      }
+      if (filters.sortBy === 'price') {
+        return ((a.basePrice || 0) - (b.basePrice || 0)) * order
+      }
+      if (filters.sortBy === 'occupancy') {
+        const occA = a.totalSeats > 0 ? a.bookedSeats / a.totalSeats : 0
+        const occB = b.totalSeats > 0 ? b.bookedSeats / b.totalSeats : 0
+        return (occA - occB) * order
+      }
+      return 0
+    })
+
+    return list
+  }, [
+    enhancedShowtimes,
+    searchInput,
+    filters.theaterId,
+    filters.auditoriumId,
+    filters.movieId,
+    filters.format,
+    filters.status,
+    filters.dateFrom,
+    filters.dateTo,
+    filters.sortBy,
+    filters.sortOrder,
+  ])
 
   // Change view mode
   const handleToggleView = (mode: 'table' | 'timeline') => {
@@ -231,20 +437,67 @@ export default function AdminShowtimeList() {
     setSearchParams(newParams, { replace: true })
   }
 
+  // Handle State Machine Transition (SCHEDULED -> SELLING -> ENDED / CANCELLED)
+  const handleUpdateStatus = async (
+    id: string,
+    newStatus: 'SCHEDULED' | 'SELLING' | 'ENDED' | 'CANCELLED',
+    movieTitle: string
+  ) => {
+    try {
+      await showtimeApiService.updateShowtimeStatus(id, newStatus)
+      const statusLabels: Record<string, string> = {
+        SELLING: 'Đã mở bán vé',
+        ENDED: 'Đã kết thúc suất chiếu',
+        CANCELLED: 'Đã hủy suất chiếu',
+        SCHEDULED: 'Đã chuyển về chờ mở bán',
+      }
+      toast.success(`${statusLabels[newStatus] || 'Đã cập nhật trạng thái'} cho suất "${movieTitle}"!`)
+      loadShowtimes()
+    } catch (err: any) {
+      console.error('Lỗi chuyển trạng thái suất chiếu:', err)
+      toast.error(err?.message || 'Không thể chuyển đổi trạng thái suất chiếu')
+    }
+  }
+
+  // Handle Delete Showtime
+  const handleOpenDelete = (st: AdminShowtime) => {
+    if (st.status === 'selling') {
+      toast.error('Không thể xóa suất chiếu đang mở bán (SELLING)! Vui lòng chuyển trạng thái sang CANCELLED trước khi xóa.')
+      return
+    }
+    setDeletingShowtime(st)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!deletingShowtime) return
+    try {
+      setIsDeleting(true)
+      await showtimeApiService.deleteShowtime(deletingShowtime.id)
+      toast.success(`Đã xóa vĩnh viễn suất chiếu "${deletingShowtime.movieTitle}"!`)
+      setDeletingShowtime(null)
+      loadShowtimes()
+    } catch (err: any) {
+      console.error('Lỗi khi xóa suất chiếu:', err)
+      toast.error(err?.message || 'Không thể xóa suất chiếu. Vui lòng thử lại.')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
   // Handle Cancel Showtime
   const handleConfirmCancel = async () => {
     if (!cancellingShowtime) return
 
     try {
       setIsCancelling(true)
-      await cancelAdminShowtime(cancellingShowtime.id)
+      await showtimeApiService.updateShowtimeStatus(cancellingShowtime.id, 'CANCELLED')
       toast.success(
         `Đã hủy suất chiếu "${cancellingShowtime.movieTitle}" (${cancellingShowtime.startTime} - ${cancellingShowtime.endTime})`
       )
       setCancellingShowtime(null)
       loadShowtimes()
-    } catch {
-      toast.error('Không thể hủy suất chiếu. Vui lòng thử lại.')
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể hủy suất chiếu. Vui lòng thử lại.')
     } finally {
       setIsCancelling(false)
     }
@@ -274,18 +527,81 @@ export default function AdminShowtimeList() {
 
   // Group showtimes by auditorium for timeline view
   const timelineAuditoriums = useMemo(() => {
-    const relevantAuds = filters.theaterId
-      ? auditoriums.filter((a) => a.theaterId === filters.theaterId)
+    // 1. Khởi tạo danh sách phòng chiếu
+    const baseAuds = filters.theaterId
+      ? auditoriums.filter((a) => a.theaterId?.toLowerCase() === filters.theaterId.toLowerCase())
       : auditoriums
 
-    return relevantAuds.map((aud) => {
-      const audShowtimes = showtimes.filter((st) => st.auditoriumId === aud.id)
-      return {
-        auditorium: aud,
-        showtimes: audShowtimes.sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    // Map chứa các phòng chiếu theo auditoriumId
+    const audMap = new Map<
+      string,
+      {
+        auditorium: AdminAuditorium & { theaterName?: string }
+        showtimes: AdminShowtime[]
       }
+    >()
+
+    // Nếu đã nạp baseAuds, đưa vào map trước (để các phòng dù chưa có suất chiếu vẫn hiển thị nếu đang lọc theo rạp)
+    baseAuds.forEach((aud) => {
+      const th = theaters.find((t) => t.id?.toLowerCase() === aud.theaterId?.toLowerCase())
+      audMap.set(aud.id, {
+        auditorium: {
+          ...aud,
+          theaterName: th?.name,
+        },
+        showtimes: [],
+      })
     })
-  }, [auditoriums, showtimes, filters.theaterId])
+
+    // 2. Quét qua filteredShowtimes để:
+    // - Tự động bổ sung phòng chiếu vào Map nếu phòng đó chưa có (ví dụ khi chưa lọc cụm rạp hoặc phòng chiếu chưa load kịp)
+    // - Phân bổ suất chiếu vào đúng phòng
+    filteredShowtimes.forEach((st) => {
+      // Chỉ lấy suất chiếu thuộc ngày đang chọn trên thanh timeline 7 ngày
+      if (st.date && timelineDate && st.date !== timelineDate) return
+
+      // Áp dụng các bộ lọc khác nếu người dùng có chọn
+      if (filters.theaterId && st.theaterId?.toLowerCase() !== filters.theaterId.toLowerCase()) return
+      if (filters.auditoriumId && st.auditoriumId?.toLowerCase() !== filters.auditoriumId.toLowerCase()) return
+      if (filters.movieId && st.movieId?.toLowerCase() !== filters.movieId.toLowerCase()) return
+      if (filters.format && st.format !== filters.format) return
+      if (filters.status && st.status !== filters.status) return
+
+      const audId = st.auditoriumId || 'unknown'
+      if (!audMap.has(audId)) {
+        audMap.set(audId, {
+          auditorium: {
+            id: audId,
+            theaterId: st.theaterId || '',
+            name: st.auditoriumName || 'Phòng chiếu',
+            format: (st.format as AuditoriumFormat) || '2D',
+            totalSeats: st.totalSeats || 0,
+            activeShowtimesCount: 1,
+            status: 'active',
+            createdAt: st.createdAt || '',
+            updatedAt: st.updatedAt || '',
+            theaterName: st.theaterName,
+          },
+          showtimes: [],
+        })
+      }
+
+      audMap.get(audId)!.showtimes.push(st)
+    })
+
+    // 3. Chuyển map thành danh sách hiển thị
+    const result = Array.from(audMap.values()).map((item) => ({
+      ...item,
+      showtimes: item.showtimes.sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    }))
+
+    // Nếu không chọn rạp cụ thể, chỉ hiển thị các phòng có suất chiếu
+    if (!filters.theaterId) {
+      return result.filter((item) => item.showtimes.length > 0)
+    }
+
+    return result
+  }, [auditoriums, filteredShowtimes, filters, theaters, timelineDate])
 
   return (
     <div className="space-y-6">
@@ -297,7 +613,9 @@ export default function AdminShowtimeList() {
               Quản lý suất chiếu
             </h1>
             <Badge variant="outline" className="font-mono text-xs text-primary border-primary/30">
-              {totalItems} suất
+              {filteredShowtimes.length !== totalItems
+                ? `${filteredShowtimes.length}/${totalItems} suất`
+                : `${totalItems} suất`}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
@@ -350,6 +668,7 @@ export default function AdminShowtimeList() {
 
       {/* 2. Filter Bar */}
       <div className="rounded-2xl border border-border/80 bg-card p-4 shadow-xs space-y-3">
+        {/* Row 1: Primary Search & Dropdowns (4 columns grid) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {/* Search box */}
           <div className="relative">
@@ -357,15 +676,18 @@ export default function AdminShowtimeList() {
             <input
               type="text"
               placeholder="Tìm phim, rạp, phòng..."
-              value={filters.search}
-              onChange={(e) => updateFilter('search', e.target.value)}
-              className="w-full h-9 pl-9 pr-8 rounded-xl border border-border/70 bg-background text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              className="w-full h-9.5 pl-9 pr-8 rounded-xl border border-border/70 bg-background text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary transition-colors"
             />
-            {filters.search && (
+            {searchInput && (
               <button
                 type="button"
-                onClick={() => updateFilter('search', '')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+                onClick={() => {
+                  setSearchInput('')
+                  updateFilter('search', '')
+                }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer p-0.5 rounded-full hover:bg-secondary"
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -375,10 +697,12 @@ export default function AdminShowtimeList() {
           {/* Theater select */}
           <Select
             value={filters.theaterId || 'all'}
-            onValueChange={(val) => updateFilter('theaterId', val)}
+            onValueChange={(val) => {
+              updateFilters({ theaterId: val, auditoriumId: '' })
+            }}
           >
-            <SelectTrigger className="h-9 text-xs rounded-xl border-border/70 bg-background">
-              <SelectValue placeholder="Lọc theo cụm rạp" />
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background">
+              <SelectValue placeholder="Tất cả cụm rạp" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tất cả cụm rạp</SelectItem>
@@ -394,9 +718,12 @@ export default function AdminShowtimeList() {
           <Select
             value={filters.auditoriumId || 'all'}
             onValueChange={(val) => updateFilter('auditoriumId', val)}
+            disabled={!filters.theaterId}
           >
-            <SelectTrigger className="h-9 text-xs rounded-xl border-border/70 bg-background">
-              <SelectValue placeholder="Lọc theo phòng chiếu" />
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background disabled:opacity-60">
+              <SelectValue
+                placeholder={filters.theaterId ? "Tất cả phòng chiếu" : "Chọn cụm rạp trước"}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tất cả phòng chiếu</SelectItem>
@@ -413,8 +740,8 @@ export default function AdminShowtimeList() {
             value={filters.movieId || 'all'}
             onValueChange={(val) => updateFilter('movieId', val)}
           >
-            <SelectTrigger className="h-9 text-xs rounded-xl border-border/70 bg-background">
-              <SelectValue placeholder="Lọc theo phim" />
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background">
+              <SelectValue placeholder="Tất cả phim" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Tất cả phim</SelectItem>
@@ -427,122 +754,178 @@ export default function AdminShowtimeList() {
           </Select>
         </div>
 
-        {/* Secondary Filters row */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-border/50 text-xs">
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Format select */}
-            <div className="w-36">
-              <Select
-                value={filters.format || 'all'}
-                onValueChange={(val) => updateFilter('format', val)}
-              >
-                <SelectTrigger className="h-8 text-xs rounded-xl border-border/70 bg-background">
-                  <SelectValue placeholder="Định dạng" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Định dạng: Tất cả</SelectItem>
-                  <SelectItem value="2D">2D Digital</SelectItem>
-                  <SelectItem value="3D">3D Digital</SelectItem>
-                  <SelectItem value="IMAX Laser">IMAX Laser</SelectItem>
-                  <SelectItem value="4DX">4DX Dynamic</SelectItem>
-                  <SelectItem value="ScreenX">ScreenX 270°</SelectItem>
-                  <SelectItem value="Dolby Atmos">Dolby Atmos</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+        {/* Row 2: Secondary Filters & Sort (4 columns grid matching Row 1) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-3 border-t border-border/50">
+          {/* Technology Format select */}
+          <Select
+            value={filters.format || 'all'}
+            onValueChange={(val) => updateFilter('format', val)}
+          >
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background">
+              <SelectValue placeholder="Tất cả định dạng" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tất cả định dạng</SelectItem>
+              <SelectItem value="2D">2D</SelectItem>
+              <SelectItem value="3D">3D</SelectItem>
+              <SelectItem value="IMAX Laser">IMAX Laser</SelectItem>
+              <SelectItem value="4DX">4DX</SelectItem>
+              <SelectItem value="ScreenX">ScreenX</SelectItem>
+              <SelectItem value="Dolby Atmos">Dolby Atmos</SelectItem>
+            </SelectContent>
+          </Select>
 
-            {/* Status select */}
-            <div className="w-36">
-              <Select
-                value={filters.status || 'all'}
-                onValueChange={(val) => updateFilter('status', val)}
-              >
-                <SelectTrigger className="h-8 text-xs rounded-xl border-border/70 bg-background">
-                  <SelectValue placeholder="Trạng thái" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Trạng thái: Tất cả</SelectItem>
-                  <SelectItem value="selling">Đang mở bán</SelectItem>
-                  <SelectItem value="sold-out">Hết vé</SelectItem>
-                  <SelectItem value="ended">Đã kết thúc</SelectItem>
-                  <SelectItem value="cancelled">Đã hủy</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {/* Status select */}
+          <Select
+            value={filters.status || 'all'}
+            onValueChange={(val) => updateFilter('status', val)}
+          >
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background">
+              <SelectValue placeholder="Tất cả trạng thái" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tất cả trạng thái</SelectItem>
+              <SelectItem value="scheduled">Đã lên lịch (Scheduled)</SelectItem>
+              <SelectItem value="selling">Đang mở bán (Selling)</SelectItem>
+              <SelectItem value="ended">Đã kết thúc (Ended)</SelectItem>
+              <SelectItem value="cancelled">Đã hủy (Cancelled)</SelectItem>
+            </SelectContent>
+          </Select>
 
-            {/* Date range inputs in Table View */}
-            {viewMode === 'table' && (
-              <div className="flex items-center gap-1.5">
-                <input
-                  type="date"
-                  value={filters.dateFrom}
-                  onChange={(e) => updateFilter('dateFrom', e.target.value)}
-                  className="h-8 px-2.5 rounded-xl border border-border/70 bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  title="Từ ngày"
-                />
-                <span className="text-muted-foreground">—</span>
-                <input
-                  type="date"
-                  value={filters.dateTo}
-                  onChange={(e) => updateFilter('dateTo', e.target.value)}
-                  className="h-8 px-2.5 rounded-xl border border-border/70 bg-background text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                  title="Đến ngày"
-                />
-              </div>
-            )}
-
-            {/* Clear filters button */}
-            {activeFilterCount > 0 && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={handleResetFilters}
-                className="h-8 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 gap-1 cursor-pointer"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Đặt lại ({activeFilterCount})</span>
-              </Button>
-            )}
+          {/* Date range picker — 2 DatePicker riêng biệt, điều phối chỉ 1 cái mở */}
+          <div className="flex items-center gap-1.5">
+            <DatePicker
+              value={filters.dateFrom || ''}
+              onChange={(val) => {
+                if (val && filters.dateTo && val > filters.dateTo) {
+                  updateFilters({ dateFrom: val, dateTo: '' })
+                } else {
+                  updateFilter('dateFrom', val)
+                }
+              }}
+              placeholder="Từ ngày"
+              clearable
+              toYear={new Date().getFullYear() + 3}
+              className="flex-1 min-w-0"
+              open={activeDatePicker === 'from'}
+              onOpenChange={(open) => setActiveDatePicker(open ? 'from' : null)}
+            />
+            <span className="text-muted-foreground font-semibold shrink-0 text-xs">—</span>
+            <DatePicker
+              value={filters.dateTo || ''}
+              onChange={(val) => updateFilter('dateTo', val)}
+              placeholder="Đến ngày"
+              clearable
+              minDate={filters.dateFrom || undefined}
+              toYear={new Date().getFullYear() + 3}
+              className="flex-1 min-w-0"
+              open={activeDatePicker === 'to'}
+              onOpenChange={(open) => setActiveDatePicker(open ? 'to' : null)}
+            />
           </div>
 
-          {/* Sắp xếp */}
-          {viewMode === 'table' && (
-            <div className="flex items-center gap-2">
-              <span className="text-muted-foreground">Sắp xếp:</span>
-              <div className="w-48">
-                <Select
-                  value={`${filters.sortBy}-${filters.sortOrder}`}
-                  onValueChange={(val) => {
-                    const [by, order] = val.split('-')
-                    const newParams = new URLSearchParams(searchParams)
-                    newParams.set('sortBy', by)
-                    newParams.set('sortOrder', order)
-                    setSearchParams(newParams, { replace: true })
-                  }}
-                >
-                  <SelectTrigger className="h-8 text-xs rounded-xl border-border/70 bg-background">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="date-asc">Ngày chiếu (gần nhất)</SelectItem>
-                    <SelectItem value="date-desc">Ngày chiếu (xa nhất)</SelectItem>
-                    <SelectItem value="startTime-asc">Giờ bắt đầu (sớm nhất)</SelectItem>
-                    <SelectItem value="occupancy-desc">Tỷ lệ lấp đầy (cao nhất)</SelectItem>
-                    <SelectItem value="price-desc">Giá vé (cao nhất)</SelectItem>
-                    <SelectItem value="price-asc">Giá vé (thấp nhất)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
+          {/* Sort By Select */}
+          <Select
+            value={`${filters.sortBy}-${filters.sortOrder}`}
+            onValueChange={(val) => {
+              const [by, order] = val.split('-')
+              updateFilters({ sortBy: by as any, sortOrder: order as any })
+            }}
+          >
+            <SelectTrigger className="h-9.5 text-xs rounded-xl border-border/70 bg-background">
+              <SelectValue placeholder="Sắp xếp theo..." />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="date-asc">Ngày chiếu (gần nhất)</SelectItem>
+              <SelectItem value="date-desc">Ngày chiếu (xa nhất)</SelectItem>
+              <SelectItem value="startTime-asc">Giờ bắt đầu (sớm nhất)</SelectItem>
+              <SelectItem value="occupancy-desc">Tỷ lệ lấp đầy (cao nhất)</SelectItem>
+              <SelectItem value="price-desc">Giá vé (cao nhất)</SelectItem>
+              <SelectItem value="price-asc">Giá vé (thấp nhất)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
+
+        {/* Active Filter Chips & Reset */}
+        {activeFilterCount > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-muted-foreground text-[11px] font-medium mr-1">Bộ lọc đang áp dụng:</span>
+              {searchInput && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Tìm kiếm: "{searchInput}"
+                  <X
+                    className="w-3 h-3 cursor-pointer hover:text-rose-500"
+                    onClick={() => {
+                      setSearchInput('')
+                      updateFilter('search', '')
+                    }}
+                  />
+                </Badge>
+              )}
+              {filters.theaterId && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Rạp: {theaters.find((t) => t.id?.toLowerCase() === filters.theaterId.toLowerCase())?.name || 'Đã chọn'}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilters({ theaterId: '', auditoriumId: '' })} />
+                </Badge>
+              )}
+              {filters.auditoriumId && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Phòng: {auditoriums.find((a) => a.id?.toLowerCase() === filters.auditoriumId.toLowerCase())?.name || 'Đã chọn'}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilter('auditoriumId', '')} />
+                </Badge>
+              )}
+              {filters.movieId && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Phim: {movies.find((m) => m.id?.toLowerCase() === filters.movieId.toLowerCase())?.title || 'Đã chọn'}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilter('movieId', '')} />
+                </Badge>
+              )}
+              {filters.format && filters.format !== 'all' && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  {filters.format}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilter('format', '')} />
+                </Badge>
+              )}
+              {filters.status && filters.status !== 'all' && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Trạng thái: {filters.status === 'selling' ? 'Đang mở bán' : filters.status === 'scheduled' ? 'Đã lên lịch' : filters.status === 'ended' ? 'Đã kết thúc' : 'Đã hủy'}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilter('status', '')} />
+                </Badge>
+              )}
+              {(filters.dateFrom || filters.dateTo) && (
+                <Badge variant="secondary" className="gap-1 text-[11px] font-normal py-0.5 rounded-lg">
+                  Ngày: {filters.dateFrom ? formatDateVN(filters.dateFrom) : '...'} — {filters.dateTo ? formatDateVN(filters.dateTo) : '...'}
+                  <X className="w-3 h-3 cursor-pointer hover:text-rose-500" onClick={() => updateFilters({ dateFrom: '', dateTo: '' })} />
+                </Badge>
+              )}
+            </div>
+
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="h-7 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 gap-1 cursor-pointer font-medium"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Xóa bộ lọc ({activeFilterCount})</span>
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* 3. Main Content: Table View vs Timeline View */}
       {viewMode === 'table' ? (
         /* TABLE VIEW */
-        <div className="rounded-2xl border border-border/80 bg-card shadow-xs overflow-hidden">
+        <div className="rounded-2xl border border-border/80 bg-card shadow-xs overflow-hidden relative">
+          {/* Subtle Top Loading Bar during Filtering */}
+          {isFiltering && (
+            <div className="absolute top-0 left-0 right-0 h-0.5 bg-primary/20 overflow-hidden z-20">
+              <div className="h-full bg-primary animate-pulse w-full" />
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">
               <thead className="bg-secondary/40 border-b border-border/70 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -557,17 +940,54 @@ export default function AdminShowtimeList() {
                   <th className="py-3.5 px-4 text-right">Thao tác</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-border/60">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={8} className="py-12 text-center text-muted-foreground">
-                      <div className="flex flex-col items-center justify-center gap-2">
-                        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                        <span className="text-xs">Đang tải lịch suất chiếu...</span>
-                      </div>
-                    </td>
-                  </tr>
-                ) : showtimes.length === 0 ? (
+              <tbody
+                className={cn(
+                  'divide-y divide-border/60 transition-opacity duration-150',
+                  isFiltering && 'opacity-60 pointer-events-none'
+                )}
+              >
+                {isInitialLoading ? (
+                  Array.from({ length: 5 }).map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      <td className="py-3.5 px-4">
+                        <div className="space-y-1.5">
+                          <div className="h-4 w-28 bg-muted rounded" />
+                          <div className="h-3 w-20 bg-muted/60 rounded" />
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-14 bg-muted rounded-md shrink-0" />
+                          <div className="space-y-1.5">
+                            <div className="h-4 w-32 bg-muted rounded" />
+                            <div className="h-3 w-16 bg-muted/60 rounded" />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="space-y-1.5">
+                          <div className="h-4 w-24 bg-muted rounded" />
+                          <div className="h-3 w-16 bg-muted/60 rounded" />
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="h-5 w-14 bg-muted rounded-md" />
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="h-4 w-16 bg-muted rounded ml-auto" />
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="h-3 w-24 bg-muted rounded" />
+                      </td>
+                      <td className="py-3.5 px-4">
+                        <div className="h-6 w-20 bg-muted rounded-full" />
+                      </td>
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="h-7 w-7 bg-muted rounded-lg ml-auto" />
+                      </td>
+                    </tr>
+                  ))
+                ) : filteredShowtimes.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="py-12 text-center text-muted-foreground">
                       <div className="flex flex-col items-center justify-center gap-2">
@@ -591,7 +1011,7 @@ export default function AdminShowtimeList() {
                     </td>
                   </tr>
                 ) : (
-                  showtimes.map((st) => {
+                  filteredShowtimes.map((st) => {
                     const occupancyRate =
                       st.totalSeats > 0 ? Math.round((st.bookedSeats / st.totalSeats) * 100) : 0
 
@@ -736,46 +1156,120 @@ export default function AdminShowtimeList() {
                           </div>
                         </td>
 
-                        {/* 8. Thao tác */}
+                        {/* 8. Thao tác - Menu 3 chấm */}
                         <td className="py-3.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            {/* View seats map button */}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/admin/auditoriums/${st.auditoriumId}/seats`)}
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                              title="Xem sơ đồ ghế phòng chiếu"
+                          <div className="flex items-center justify-end">
+                            <Popover
+                              open={openActionMenuId === st.id}
+                              onOpenChange={(open) => setOpenActionMenuId(open ? st.id : null)}
                             >
-                              <Eye className="w-3.5 h-3.5" />
-                            </Button>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                  aria-label={`Thao tác cho suất chiếu ${st.movieTitle}`}
+                                >
+                                  <MoreVertical className="w-4 h-4" />
+                                </button>
+                              </PopoverTrigger>
 
-                            {/* Edit showtime button */}
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => navigate(`/admin/showtimes/${st.id}/edit`)}
-                              className="h-8 w-8 p-0 text-muted-foreground hover:text-primary cursor-pointer"
-                              title="Chỉnh sửa suất chiếu"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </Button>
-
-                            {/* Cancel showtime button */}
-                            {st.status !== 'cancelled' && st.status !== 'ended' && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setCancellingShowtime(st)}
-                                className="h-8 w-8 p-0 text-muted-foreground hover:text-rose-500 cursor-pointer"
-                                title="Hủy suất chiếu"
+                              <PopoverContent
+                                align="end"
+                                sideOffset={4}
+                                className="w-52 rounded-xl border border-border/80 bg-card/95 p-1.5 shadow-xl backdrop-blur-xl space-y-0.5 text-left z-50"
                               >
-                                <Ban className="w-3.5 h-3.5" />
-                              </Button>
-                            )}
+                                {/* 1. Chỉnh sửa suất chiếu */}
+                                <Link
+                                  to={`/admin/showtimes/${st.id}/edit`}
+                                  onClick={() => setOpenActionMenuId(null)}
+                                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors font-medium"
+                                >
+                                  <Edit className="w-3.5 h-3.5 text-primary" />
+                                  <span>Chỉnh sửa suất chiếu</span>
+                                </Link>
+
+                                {/* 2. Xem sơ đồ ghế phòng chiếu */}
+                                <Link
+                                  to={`/admin/auditoriums/${st.auditoriumId}/seats`}
+                                  onClick={() => setOpenActionMenuId(null)}
+                                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-foreground hover:bg-secondary transition-colors"
+                                >
+                                  <Eye className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span>Xem sơ đồ ghế phòng</span>
+                                </Link>
+
+                                {/* 3. State Machine Actions */}
+                                {st.status === 'scheduled' && (
+                                  <>
+                                    <div className="border-t border-border/50 my-1" />
+                                    <div className="px-2.5 py-1 text-[10px] font-bold text-muted-foreground uppercase">
+                                      Vận hành bán vé:
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionMenuId(null)
+                                        handleUpdateStatus(st.id, 'SELLING', st.movieTitle)
+                                      }}
+                                      className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10 transition-colors cursor-pointer text-left font-medium"
+                                    >
+                                      <PlayCircle className="w-3.5 h-3.5" />
+                                      <span>Mở bán vé (SELLING)</span>
+                                    </button>
+                                  </>
+                                )}
+
+                                {st.status === 'selling' && (
+                                  <>
+                                    <div className="border-t border-border/50 my-1" />
+                                    <div className="px-2.5 py-1 text-[10px] font-bold text-muted-foreground uppercase">
+                                      Vận hành bán vé:
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setOpenActionMenuId(null)
+                                        handleUpdateStatus(st.id, 'ENDED', st.movieTitle)
+                                      }}
+                                      className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer text-left font-medium"
+                                    >
+                                      <CheckCircle className="w-3.5 h-3.5" />
+                                      <span>Kết thúc suất (ENDED)</span>
+                                    </button>
+                                  </>
+                                )}
+
+                                <div className="border-t border-border/50 my-1" />
+
+                                {/* 4. Hủy suất chiếu */}
+                                {st.status !== 'cancelled' && st.status !== 'ended' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setOpenActionMenuId(null)
+                                      setCancellingShowtime(st)
+                                    }}
+                                    className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors cursor-pointer text-left"
+                                  >
+                                    <Ban className="w-3.5 h-3.5" />
+                                    <span>Hủy suất chiếu</span>
+                                  </button>
+                                )}
+
+                                {/* 5. Xóa vĩnh viễn */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setOpenActionMenuId(null)
+                                    handleOpenDelete(st)
+                                  }}
+                                  className="w-full flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors cursor-pointer text-left font-medium"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>Xóa vĩnh viễn</span>
+                                </button>
+                              </PopoverContent>
+                            </Popover>
                           </div>
                         </td>
                       </tr>
@@ -787,7 +1281,7 @@ export default function AdminShowtimeList() {
           </div>
 
           {/* Table Pagination */}
-          {!isLoading && totalPages > 1 && (
+          {!isInitialLoading && totalPages > 1 && (
             <div className="p-4 border-t border-border/70">
               <AdminPagination
                 page={filters.page}
@@ -860,16 +1354,23 @@ export default function AdminShowtimeList() {
                     >
                       {/* Left: Auditorium info */}
                       <div className="w-48 shrink-0 pr-4 flex flex-col justify-center space-y-1">
-                        <span className="font-semibold text-xs text-foreground line-clamp-1">
+                        <span className="font-semibold text-xs text-foreground line-clamp-1" title={aud.name}>
                           {aud.name}
                         </span>
+                        {aud.theaterName && (
+                          <span className="text-[11px] text-muted-foreground line-clamp-1" title={aud.theaterName}>
+                            {aud.theaterName}
+                          </span>
+                        )}
                         <div className="flex items-center gap-1.5">
                           <Badge variant="outline" className="text-[10px] px-1 py-0 text-primary">
                             {aud.format}
                           </Badge>
-                          <span className="text-[11px] text-muted-foreground font-mono">
-                            {aud.totalSeats} ghế
-                          </span>
+                          {aud.totalSeats > 0 && (
+                            <span className="text-[11px] text-muted-foreground font-mono">
+                              {aud.totalSeats} ghế
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -914,6 +1415,8 @@ export default function AdminShowtimeList() {
                                     ? 'bg-slate-500/20 text-muted-foreground line-through border border-slate-500/40'
                                     : st.status === 'sold-out'
                                     ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50 hover:bg-rose-500/30'
+                                    : st.status === 'selling'
+                                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/30'
                                     : 'bg-primary/20 text-primary border border-primary/40 hover:bg-primary/30',
                                   st.hasConflict && 'ring-2 ring-amber-500 animate-pulse'
                                 )}
@@ -930,7 +1433,9 @@ export default function AdminShowtimeList() {
                                     {st.startTime} - {st.endTime}
                                   </span>
                                   <span>
-                                    {st.bookedSeats}/{st.totalSeats}
+                                    {st.totalSeats > 0 || aud.totalSeats > 0
+                                      ? `${st.bookedSeats}/${st.totalSeats || aud.totalSeats}`
+                                      : 'Đang mở'}
                                   </span>
                                 </div>
                               </div>
@@ -1003,11 +1508,9 @@ export default function AdminShowtimeList() {
               <div>
                 <span className="text-muted-foreground block">Lấp đầy ghế:</span>
                 <span className="font-mono font-bold text-foreground">
-                  {activeTimelineItem.bookedSeats} / {activeTimelineItem.totalSeats} ghế (
-                  {Math.round(
-                    (activeTimelineItem.bookedSeats / activeTimelineItem.totalSeats) * 100
-                  )}
-                  %)
+                  {activeTimelineItem.totalSeats > 0
+                    ? `${activeTimelineItem.bookedSeats} / ${activeTimelineItem.totalSeats} ghế (${Math.round((activeTimelineItem.bookedSeats / activeTimelineItem.totalSeats) * 100)}%)`
+                    : `${activeTimelineItem.bookedSeats} vé đã đặt`}
                 </span>
               </div>
 
@@ -1072,9 +1575,7 @@ export default function AdminShowtimeList() {
                 cancellingShowtime.date
               )} tại ${cancellingShowtime.auditoriumName} (${
                 cancellingShowtime.theaterName
-              }) sẽ bị hủy hoàn toàn.\n\n⚠️ CẢNH BÁO: Hiện có ${
-                cancellingShowtime.affectedBookingsCount
-              } đơn đặt vé đã thanh toán cho suất chiếu này. Hủy suất chiếu sẽ khóa phòng, tự động giải phóng ghế, kích hoạt quy trình hoàn tiền và gửi thông báo khẩn cấp đến khách hàng.`
+              }) sẽ chuyển sang trạng thái ĐÃ HỦY (CANCELLED).\n\n⚠️ Lưu ý: Thao tác này sẽ khóa bán vé của suất chiếu và thông báo tới các bộ phận liên quan.`
             : ''
         }
         confirmText={isCancelling ? 'Đang hủy...' : 'Xác nhận hủy suất chiếu'}
@@ -1083,6 +1584,23 @@ export default function AdminShowtimeList() {
         isLoading={isCancelling}
         onConfirm={handleConfirmCancel}
         onCancel={() => setCancellingShowtime(null)}
+      />
+
+      {/* 6. Delete Showtime Confirmation Modal */}
+      <AdminConfirmDialog
+        isOpen={!!deletingShowtime}
+        title="Xác nhận xóa vĩnh viễn suất chiếu?"
+        description={
+          deletingShowtime
+            ? `Bạn có chắc chắn muốn xóa hoàn toàn suất chiếu "${deletingShowtime.movieTitle}" (${deletingShowtime.startTime} - ${deletingShowtime.endTime}) tại phòng ${deletingShowtime.auditoriumName}?\n\nDữ liệu sẽ bị xóa khỏi hệ thống và không thể phục hồi.`
+            : ''
+        }
+        confirmText={isDeleting ? 'Đang xóa...' : 'Xóa vĩnh viễn'}
+        cancelText="Hủy bỏ"
+        variant="destructive"
+        isLoading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeletingShowtime(null)}
       />
     </div>
   )

@@ -31,15 +31,14 @@ import type {
 } from '@/types/admin-seat'
 import type { AdminAuditorium, AdminTheater } from '@/types/admin-theater'
 import {
-  getSeatLayoutByAuditoriumId,
-  saveAuditoriumSeatLayout,
-  calculateLayoutSummary,
-} from '@/mocks/admin/seat-layouts'
-import {
-  getAdminTheaterById,
-} from '@/mocks/admin/theaters'
+  theaterApiService,
+  mapBackendSeatsToAdminRows,
+  type SeatGeneratePayload,
+} from '@/services/theater-api.service'
+import { calculateLayoutSummary } from '@/mocks/admin/seat-layouts'
 import { AdminSeatLegend } from '@/components/admin/seats/admin-seat-legend'
 import { AdminSeatItemComponent } from '@/components/admin/seats/admin-seat-item'
+import { SeatGeneratorModal } from '@/components/admin/seats/seat-generator-modal'
 import { CinemaScreen } from '@/components/booking/cinema-screen'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
 import { Button } from '@/components/ui/button'
@@ -57,6 +56,8 @@ export default function AdminAuditoriumSeatLayout() {
   const [layout, setLayout] = useState<AuditoriumSeatLayout | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const [isGeneratorOpen, setIsGeneratorOpen] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
 
   // Selection state: array of selected seat IDs
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([])
@@ -76,47 +77,50 @@ export default function AdminAuditoriumSeatLayout() {
   // Initial layout for dirty checking
   const [initialRowsJson, setInitialRowsJson] = useState<string>('')
 
-  // Load auditorium, theater, and seat layout
+  // Load auditorium, theater, and seat layout from API
   useEffect(() => {
     if (!auditoriumId) return
     let isCancelled = false
     setIsLoading(true)
 
-    // Load data from mock services
     const fetchData = async () => {
       try {
-        // Find which theater owns this auditorium
-        const rawAuds = localStorage.getItem('cinebook_admin_auditoriums')
-        const allAuds: AdminAuditorium[] = rawAuds ? JSON.parse(rawAuds) : []
-        const aud = allAuds.find((a) => a.id === auditoriumId)
-
+        // 1. Load auditorium details
+        const aud = await theaterApiService.getAuditoriumById(auditoriumId)
         if (!aud) {
           toast.error('Không tìm thấy thông tin phòng chiếu')
           navigate('/admin/theaters')
           return
         }
 
-        const th = await getAdminTheaterById(aud.theaterId)
-        const seatLayout = await getSeatLayoutByAuditoriumId(
-          aud.id,
-          aud.theaterId,
-          aud.totalSeats,
-          aud.format
-        )
+        // 2. Load theater details & seats in parallel
+        const [th, seatLayoutRes] = await Promise.all([
+          theaterApiService.getAdminTheaterById(aud.theaterId),
+          theaterApiService.getAuditoriumSeats(auditoriumId),
+        ])
+
+        const rows = mapBackendSeatsToAdminRows(seatLayoutRes?.seats || [])
+
+        const seatLayout: AuditoriumSeatLayout = {
+          auditoriumId: aud.id,
+          theaterId: aud.theaterId,
+          rows,
+          updatedAt: aud.updatedAt,
+        }
 
         if (!isCancelled) {
           setAuditorium(aud)
           setTheater(th)
           setLayout(seatLayout)
-          setHistory([seatLayout.rows])
+          setHistory([rows])
           setHistoryIndex(0)
-          setInitialRowsJson(JSON.stringify(seatLayout.rows))
+          setInitialRowsJson(JSON.stringify(rows))
           setIsLoading(false)
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error(err)
         if (!isCancelled) {
-          toast.error('Lỗi khi tải sơ đồ ghế')
+          toast.error(err?.message || 'Lỗi khi tải sơ đồ ghế phòng chiếu')
           navigate('/admin/theaters')
         }
       }
@@ -584,25 +588,70 @@ export default function AdminAuditoriumSeatLayout() {
 
   // Save layout confirmation
   const handleConfirmSave = async () => {
-    if (!layout || !auditorium) return
+    if (!auditorium) return
 
     try {
       setIsSaving(true)
-      const res = await saveAuditoriumSeatLayout({
-        ...layout,
-        rows: currentRows,
-      })
+      const payload: SeatGeneratePayload = {
+        rows: currentRows.map((r) => {
+          const coupleCount = r.seats.filter((s) => s.type === 'couple').length
+          const vipCount = r.seats.filter((s) => s.type === 'vip').length
+          let seatType: 'STANDARD' | 'VIP' | 'COUPLE' = 'STANDARD'
+          if (coupleCount > r.seats.length / 2) seatType = 'COUPLE'
+          else if (vipCount > r.seats.length / 2) seatType = 'VIP'
 
-      setInitialRowsJson(JSON.stringify(currentRows))
+          return {
+            label: r.rowLabel,
+            seatCount: r.seats.length,
+            seatType,
+          }
+        }),
+      }
+
+      const res = await theaterApiService.generateSeatLayout(auditorium.id, payload)
+      const newRows = mapBackendSeatsToAdminRows(res.seats || [])
+
+      setAuditorium((prev) => (prev ? { ...prev, totalSeats: res.totalSeats } : null))
+      setLayout((prev) => (prev ? { ...prev, rows: newRows } : null))
+      setHistory([newRows])
+      setHistoryIndex(0)
+      setInitialRowsJson(JSON.stringify(newRows))
+      setSelectedSeatIds([])
       toast.success(
         `Đã lưu sơ đồ ghế thành công! Tổng công suất phòng đã được đồng bộ lại là ${res.totalSeats} ghế.`
       )
       setShowSaveDialog(false)
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      toast.error('Không thể lưu sơ đồ ghế. Vui lòng thử lại.')
+      toast.error(err?.message || 'Không thể lưu sơ đồ ghế. Vui lòng thử lại.')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  // Handle auto-generator submission
+  const handleGenerateLayout = async (payload: SeatGeneratePayload) => {
+    if (!auditorium) return
+    try {
+      setIsGenerating(true)
+      const res = await theaterApiService.generateSeatLayout(auditorium.id, payload)
+      const newRows = mapBackendSeatsToAdminRows(res.seats || [])
+
+      setAuditorium((prev) => (prev ? { ...prev, totalSeats: res.totalSeats } : null))
+      setLayout((prev) => (prev ? { ...prev, rows: newRows } : null))
+      setHistory([newRows])
+      setHistoryIndex(0)
+      setInitialRowsJson(JSON.stringify(newRows))
+      setSelectedSeatIds([])
+      toast.success(
+        `Đã khởi tạo sơ đồ ghế thành công! Tổng số ghế mới: ${res.totalSeats} ghế.`
+      )
+      setIsGeneratorOpen(false)
+    } catch (err: any) {
+      console.error(err)
+      toast.error(err?.message || 'Không thể sinh sơ đồ ghế. Vui lòng kiểm tra lại.')
+    } finally {
+      setIsGenerating(false)
     }
   }
 
@@ -739,13 +788,26 @@ export default function AdminAuditoriumSeatLayout() {
               )}
             </div>
 
+            {/* Auto Generate Seats Button */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsGeneratorOpen(true)}
+              disabled={isSaving || isGenerating}
+              className="rounded-xl text-xs gap-1.5 cursor-pointer font-bold border-primary/40 text-primary hover:bg-primary/10"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Khởi tạo / Sinh lại ghế</span>
+            </Button>
+
             {/* Save Layout CTA */}
             <Button
               type="button"
               variant="primary"
               size="sm"
               onClick={() => setShowSaveDialog(true)}
-              disabled={isSaving}
+              disabled={isSaving || isGenerating}
               className="rounded-xl text-xs gap-1.5 shadow-sm shadow-primary/30 cursor-pointer font-bold px-4"
             >
               <Save className="w-3.5 h-3.5" />
@@ -908,18 +970,32 @@ export default function AdminAuditoriumSeatLayout() {
 
       {/* 5. Main Seat Map Interactive Canvas */}
       <div className="rounded-2xl border border-border/80 bg-card p-6 shadow-sm relative overflow-hidden">
-        {/* Mobile Swipe Guide Banner */}
-        <div className="flex items-center justify-center gap-1.5 pb-4 text-[11px] text-muted-foreground sm:hidden">
-          <MoveHorizontal className="w-3.5 h-3.5 animate-pulse" />
-          <span>Vuốt ngang để xem và điều chỉnh toàn bộ sơ đồ ghế</span>
-        </div>
+        {currentRows.length === 0 ? (
+          <div className="py-16 text-center space-y-4">
+            <div className="w-14 h-14 rounded-2xl bg-secondary/80 border border-border/80 flex items-center justify-center mx-auto text-muted-foreground">
+              <Tv className="w-7 h-7" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-foreground">Phòng chiếu chưa có sơ đồ ghế</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                Phòng chiếu "{auditorium.name}" hiện chưa được cấu hình sơ đồ ghế. Hãy sử dụng nút "Khởi tạo / Sinh lại ghế" ở thanh công cụ phía trên để khởi tạo.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Mobile Swipe Guide Banner */}
+            <div className="flex items-center justify-center gap-1.5 pb-4 text-[11px] text-muted-foreground sm:hidden">
+              <MoveHorizontal className="w-3.5 h-3.5 animate-pulse" />
+              <span>Vuốt ngang để xem và điều chỉnh toàn bộ sơ đồ ghế</span>
+            </div>
 
-        {/* Scrollable Map Container */}
-        <div className="overflow-x-auto scrollbar-thin py-4 flex flex-col items-center">
-          <div
-            className="transition-transform duration-150 origin-top flex flex-col items-center min-w-max px-8"
-            style={{ transform: `scale(${zoomLevel})` }}
-          >
+            {/* Scrollable Map Container */}
+            <div className="overflow-x-auto scrollbar-thin py-4 flex flex-col items-center">
+              <div
+                className="transition-transform duration-150 origin-top flex flex-col items-center min-w-max px-8"
+                style={{ transform: `scale(${zoomLevel})` }}
+              >
             {/* Cinema Curved Screen */}
             <div className="w-full max-w-2xl mb-12">
               <CinemaScreen />
@@ -1092,10 +1168,12 @@ export default function AdminAuditoriumSeatLayout() {
                   </div>
                 )
               })}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </>
+      )}
+    </div>
 
       {/* 6. Sticky Floating Bulk Actions Bar (Appears when >= 1 seat selected) */}
       {selectedSeatIds.length > 0 && (
@@ -1237,6 +1315,17 @@ export default function AdminAuditoriumSeatLayout() {
         variant="destructive"
         onConfirm={handleConfirmDeleteRow}
         onCancel={() => setRowToDelete(null)}
+      />
+
+      {/* 10. Seat Generator Modal */}
+      <SeatGeneratorModal
+        isOpen={isGeneratorOpen}
+        auditoriumName={auditorium.name}
+        auditoriumFormat={auditorium.format}
+        currentTotalSeats={auditorium.totalSeats}
+        isGenerating={isGenerating}
+        onGenerate={handleGenerateLayout}
+        onClose={() => setIsGeneratorOpen(false)}
       />
     </div>
   )

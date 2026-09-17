@@ -1,10 +1,13 @@
 import { useState } from 'react'
-import { Star, Clock, Calendar, User, Users, Film } from 'lucide-react'
+import { Star, Clock, Calendar, User, Users, Film, Play } from 'lucide-react'
 import { AgeRatingBadge } from '@/components/movie/age-rating-badge'
 import { cn } from '@/lib/utils'
 
 export interface MovieInfoProps {
   title: string
+  originalTitle?: string
+  status?: string
+  trailerUrl?: string
   posterUrl: string
   backdropUrl?: string
   overview?: string
@@ -20,6 +23,9 @@ export interface MovieInfoProps {
 
 export function MovieInfo({
   title,
+  originalTitle,
+  status,
+  trailerUrl,
   posterUrl,
   backdropUrl,
   overview,
@@ -106,6 +112,20 @@ export function MovieInfo({
             {/* Thể loại & Tựa đề */}
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2">
+                {status && (
+                  <span
+                    className={cn(
+                      'inline-flex items-center rounded-lg px-2.5 py-1 text-xs font-semibold',
+                      status.toLowerCase().includes('now') || status.toLowerCase().includes('selling')
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30'
+                        : 'bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30'
+                    )}
+                  >
+                    {status.toLowerCase().includes('now') || status.toLowerCase().includes('selling')
+                      ? 'Đang chiếu'
+                      : 'Sắp chiếu'}
+                  </span>
+                )}
                 {genres.map((genre) => (
                   <span
                     key={genre}
@@ -116,51 +136,72 @@ export function MovieInfo({
                 ))}
               </div>
 
-              <h1 className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl md:text-4xl lg:text-5xl text-balance">
-                {title}
-              </h1>
+              <div>
+                <h1 className="text-2xl font-extrabold tracking-tight text-foreground sm:text-3xl md:text-4xl lg:text-5xl text-balance">
+                  {title}
+                </h1>
+                {originalTitle && originalTitle.trim().toLowerCase() !== title.trim().toLowerCase() && (
+                  <p className="mt-1 text-sm sm:text-base text-muted-foreground font-medium italic">
+                    Tên gốc: {originalTitle}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* Thanh thông số nhanh: Rating, Thời lượng, Ngày khởi chiếu */}
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-border/40 py-3 text-xs text-muted-foreground sm:text-sm">
-              {typeof rating === 'number' && rating > 0 && (
-                <div className="flex items-center gap-1.5 font-bold text-foreground">
-                  <Star
-                    className="h-4 w-4 fill-amber-400 text-amber-400"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    {rating.toFixed(1)}{' '}
-                    <span className="text-xs font-normal text-muted-foreground">
-                      / 10
+            {/* Thanh thông số nhanh: Rating, Thời lượng, Ngày khởi chiếu & Nút Trailer */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-y border-border/40 py-3 text-xs text-muted-foreground sm:text-sm">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                {typeof rating === 'number' && rating > 0 && (
+                  <div className="flex items-center gap-1.5 font-bold text-foreground">
+                    <Star
+                      className="h-4 w-4 fill-amber-400 text-amber-400"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      {rating.toFixed(1)}{' '}
+                      <span className="text-xs font-normal text-muted-foreground">
+                        / 10
+                      </span>
                     </span>
-                  </span>
-                </div>
-              )}
+                  </div>
+                )}
 
-              {formattedDuration && (
-                <div className="flex items-center gap-1.5">
-                  <Clock
-                    className="h-4 w-4 shrink-0 text-primary"
-                    aria-hidden="true"
-                  />
-                  <span>{formattedDuration}</span>
-                </div>
-              )}
+                {formattedDuration && (
+                  <div className="flex items-center gap-1.5">
+                    <Clock
+                      className="h-4 w-4 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
+                    <span>{formattedDuration}</span>
+                  </div>
+                )}
 
-              {releaseDate && (
-                <div className="flex items-center gap-1.5">
-                  <Calendar
-                    className="h-4 w-4 shrink-0 text-primary"
-                    aria-hidden="true"
-                  />
-                  <span>
-                    Khởi chiếu:{' '}
-                    <span className="font-medium text-foreground">
-                      {releaseDate}
+                {releaseDate && (
+                  <div className="flex items-center gap-1.5">
+                    <Calendar
+                      className="h-4 w-4 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
+                    <span>
+                      Khởi chiếu:{' '}
+                      <span className="font-medium text-foreground">
+                        {releaseDate}
+                      </span>
                     </span>
-                  </span>
-                </div>
+                  </div>
+                )}
+              </div>
+
+              {trailerUrl && (
+                <a
+                  href={trailerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary border border-primary/25 px-3 py-1.5 text-xs font-semibold transition-all hover:scale-105 active:scale-95 cursor-pointer shrink-0"
+                >
+                  <Play className="h-3.5 w-3.5 fill-current" />
+                  <span>Xem Trailer</span>
+                </a>
               )}
             </div>
 

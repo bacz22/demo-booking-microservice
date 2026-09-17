@@ -1,58 +1,74 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useLocation, useNavigate, Link } from 'react-router-dom'
-import { ArrowLeft, ShieldCheck, User, Mail, Phone, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, ShieldCheck, User, Mail, Phone, AlertTriangle, Film } from 'lucide-react'
 import { SeatHoldCountdown } from '@/components/booking/seat-hold-countdown'
 import { BookingSummaryCard } from '@/components/booking/booking-summary-card'
 import { PaymentMethodSelector } from '@/components/payment/payment-method-selector'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { FormField } from '@/components/ui/form-field'
+import { EmptyState } from '@/components/ui/empty-state'
 import { formatPrice } from '@/lib/utils'
-import { HERO_MOVIE } from '@/mocks/movies'
-import { MOCK_CINEMAS } from '@/mocks/cinemas'
 import { toast } from '@/lib/toast'
 import type { PaymentMethodId } from '@/types/payment'
+
+interface CheckoutLocationState {
+  showtimeId?: string
+  movieId?: string
+  movieTitle?: string
+  posterUrl?: string
+  cinemaName?: string
+  roomName?: string
+  showtime?: string
+  startTime?: string
+  date?: string
+  seats?: string[]
+  total?: number
+  format?: string
+  ageRating?: string
+}
 
 export default function CheckoutPage() {
   const location = useLocation()
   const navigate = useNavigate()
+  const state = location.state as CheckoutLocationState | null
 
-  // 1. Dữ liệu đơn đặt vé (Ưu tiên lấy từ state chuyển tiếp của SeatSelectionPage, fallback về mock)
+  const hasValidBooking = Boolean(state?.movieTitle && state?.seats && state.seats.length > 0)
+
+  // 1. Dữ liệu đơn đặt vé từ state chuyển tiếp của SeatSelectionPage
   const bookingData = useMemo(() => {
-    const s = location.state
-    if (s && s.movieTitle) {
+    if (!state || !state.movieTitle) {
       return {
-        movieTitle: s.movieTitle,
-        posterUrl: s.posterUrl || HERO_MOVIE.posterUrl,
-        cinemaName: s.cinemaName || MOCK_CINEMAS[0].name,
-        roomName: s.roomName || 'Phòng chiếu 02 - ScreenX',
-        showtime: s.showtime || '10:15',
-        date: s.date || 'Hôm nay, 14/09/2026',
-        seats: s.seats || ['C5', 'C6'],
-        subtotal: s.total || 190000,
+        movieTitle: '',
+        posterUrl: '',
+        cinemaName: '',
+        roomName: '',
+        showtime: '',
+        date: '',
+        seats: [] as string[],
+        subtotal: 0,
         serviceFee: 0,
-        total: s.total || 190000,
-        format: 'IMAX 2D',
-        ageRating: 'T16',
+        total: 0,
+        format: '2D',
+        ageRating: 'P',
       }
     }
 
-    // Dữ liệu giả lập mặc định nếu truy cập trực tiếp /checkout
     return {
-      movieTitle: HERO_MOVIE.title,
-      posterUrl: HERO_MOVIE.posterUrl,
-      cinemaName: MOCK_CINEMAS[0].name,
-      roomName: 'Phòng chiếu 02 - ScreenX',
-      showtime: '10:15',
-      date: 'Hôm nay, 14/09/2026',
-      seats: ['C5', 'C6'],
-      subtotal: 190000,
+      movieTitle: state.movieTitle,
+      posterUrl: state.posterUrl || '',
+      cinemaName: state.cinemaName || 'Rạp CineBook',
+      roomName: state.roomName || 'Phòng chiếu tiêu chuẩn',
+      showtime: state.showtime || '10:00',
+      date: state.date || 'Hôm nay',
+      seats: state.seats || [],
+      subtotal: state.total || 0,
       serviceFee: 0,
-      total: 190000,
-      format: 'IMAX 2D',
-      ageRating: 'T16',
+      total: state.total || 0,
+      format: state.format || '2D',
+      ageRating: state.ageRating || 'P',
     }
-  }, [location.state])
+  }, [state])
 
   // 2. Thời điểm hết hạn giữ vé (5 phút từ khi tải trang)
   const [expiresAt] = useState<number>(() => Date.now() + 5 * 60 * 1000)
@@ -101,6 +117,34 @@ export default function CheckoutPage() {
         },
       })
     }, 1500)
+  }
+
+  // Nếu không có thông tin đặt vé hợp lệ, hiển thị thông báo EmptyState
+  if (!hasValidBooking) {
+    return (
+      <div className="space-y-6 pb-16">
+        <div>
+          <Link
+            to="/cinemas"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Quay lại lịch chiếu rạp</span>
+          </Link>
+        </div>
+
+        <EmptyState
+          icon={Film}
+          title="Chưa có thông tin vé cần thanh toán"
+          description="Bạn chưa chọn vé hoặc phiên làm việc đã kết thúc. Vui lòng chọn phim và ghế ngồi để tiếp tục đặt vé."
+          action={{
+            label: 'Khám phá phim & lịch chiếu',
+            href: '/cinemas',
+          }}
+          className="py-16"
+        />
+      </div>
+    )
   }
 
   return (
@@ -269,7 +313,7 @@ export default function CheckoutPage() {
               date={bookingData.date}
               showtime={bookingData.showtime}
               seats={bookingData.seats}
-              ticketPrice={75000}
+              ticketPrice={bookingData.seats.length > 0 ? Math.round(bookingData.total / bookingData.seats.length) : undefined}
               subtotal={bookingData.subtotal}
               serviceFee={bookingData.serviceFee}
               total={bookingData.total}

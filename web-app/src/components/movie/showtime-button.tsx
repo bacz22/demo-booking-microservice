@@ -11,6 +11,10 @@ export interface ShowtimeButtonProps {
   format?: string
   /** Ngôn ngữ / bản phim (ví dụ "Phụ đề", "Lồng tiếng") */
   language?: string
+  /** Tên phòng chiếu (ví dụ "Phòng 1", "Phòng Thử Nghiệm Ghế") */
+  roomName?: string
+  /** Giá vé cơ bản (ví dụ 110000) */
+  price?: number
   /** Số ghế còn trống (tuỳ chọn) */
   remainingSeats?: number
   /** Tổng số ghế của phòng (tuỳ chọn) */
@@ -31,6 +35,8 @@ export function ShowtimeButton({
   endTime,
   format = '2D',
   language,
+  roomName,
+  price,
   remainingSeats,
   selected = false,
   disabled = false,
@@ -138,41 +144,49 @@ export function ShowtimeButton({
         )}
       </div>
 
-      {/* Dòng dưới: Ngôn ngữ / Số ghế còn trống / Text HẾT VÉ rõ ràng */}
-      {(language || remainingSeats !== undefined || isSoldOut) && (
+      {/* Dòng dưới: Phòng / Ngôn ngữ / Giá vé / Số ghế / Text HẾT VÉ */}
+      {(language || roomName || price !== undefined || remainingSeats !== undefined || isSoldOut) && (
         <div className="flex w-full items-center justify-between gap-1.5 pt-1 text-[11px] leading-none">
-          {language && (
+          {(roomName || language) && (
             <span
               className={cn(
-                'truncate font-normal transition-colors',
+                'truncate font-normal transition-colors max-w-[85px]',
                 selected ? 'text-primary-foreground/85' : 'text-muted-foreground'
               )}
+              title={roomName || language}
             >
-              {language}
+              {roomName || language}
             </span>
           )}
 
-          {/* Hiển thị rõ text HẾT VÉ hoặc số ghế */}
+          {/* Hiển thị rõ text HẾT VÉ hoặc số ghế / giá vé */}
           {isSoldOut ? (
             <span className="ml-auto inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-destructive bg-destructive/10 border border-destructive/20">
               Hết vé
             </span>
-          ) : (
-            remainingSeats !== undefined && (
-              <span
-                className={cn(
-                  'ml-auto font-medium transition-colors',
-                  selected
-                    ? 'text-primary-foreground/90'
-                    : remainingSeats <= 10
-                      ? 'text-amber-500 font-semibold'
-                      : 'text-muted-foreground'
-                )}
-              >
-                {remainingSeats} ghế
-              </span>
-            )
-          )}
+          ) : remainingSeats !== undefined ? (
+            <span
+              className={cn(
+                'ml-auto font-medium transition-colors',
+                selected
+                  ? 'text-primary-foreground/90'
+                  : remainingSeats <= 10
+                    ? 'text-amber-500 font-semibold'
+                    : 'text-muted-foreground'
+              )}
+            >
+              {remainingSeats} ghế
+            </span>
+          ) : price !== undefined && price > 0 ? (
+            <span
+              className={cn(
+                'ml-auto font-medium transition-colors',
+                selected ? 'text-primary-foreground/90' : 'text-primary font-semibold'
+              )}
+            >
+              {price.toLocaleString('vi-VN')} đ
+            </span>
+          ) : null}
         </div>
       )}
     </button>

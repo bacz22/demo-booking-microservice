@@ -189,6 +189,19 @@ public class ShowtimeService {
         LocalDate date,
         Pageable pageable
     ) {
+        return getShowtimesWithFilters(theaterId, auditoriumId, movieId, status, date, null, null, pageable);
+    }
+
+    public PageResponse<ShowtimeResponse> getShowtimesWithFilters(
+        UUID theaterId,
+        UUID auditoriumId,
+        UUID movieId,
+        ShowtimeStatus status,
+        LocalDate date,
+        LocalDate dateFrom,
+        LocalDate dateTo,
+        Pageable pageable
+    ) {
         Specification<Showtime> spec = (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
@@ -213,6 +226,15 @@ public class ShowtimeService {
                 Instant endOfDay = date.plusDays(1).atStartOfDay(VIETNAM_ZONE).toInstant();
                 predicates.add(cb.greaterThanOrEqualTo(root.get("startTime"), startOfDay));
                 predicates.add(cb.lessThan(root.get("startTime"), endOfDay));
+            } else {
+                if (dateFrom != null) {
+                    Instant startFrom = dateFrom.atStartOfDay(VIETNAM_ZONE).toInstant();
+                    predicates.add(cb.greaterThanOrEqualTo(root.get("startTime"), startFrom));
+                }
+                if (dateTo != null) {
+                    Instant endTo = dateTo.plusDays(1).atStartOfDay(VIETNAM_ZONE).toInstant();
+                    predicates.add(cb.lessThan(root.get("startTime"), endTo));
+                }
             }
 
             return cb.and(predicates.toArray(new Predicate[0]));

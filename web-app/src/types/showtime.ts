@@ -11,6 +11,7 @@ export interface ShowtimeItem {
   movieId?: string
   cinemaId?: string
   roomId?: string
+  roomName?: string
   startTime: string // "10:30"
   endTime?: string // "12:30"
   format?: string // "2D" | "3D" | "IMAX" | string

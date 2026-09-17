@@ -19,8 +19,13 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { MOCK_CINEMAS, type CinemaWithShowtimes, type CinemaMovieSchedule } from '@/mocks/cinemas'
+import type { CinemaWithShowtimes, CinemaMovieSchedule } from '@/types/cinema'
 import type { ShowtimeItem } from '@/types/showtime'
+import type { AdminTheater } from '@/types/admin-theater'
+import type { AdminMovie } from '@/types/admin-movie'
+import { theaterApiService } from '@/services/theater-api.service'
+import { movieApiService } from '@/services/movie-api.service'
+import { showtimeApiService } from '@/services/showtime-api.service'
 import { cn } from '@/lib/utils'
 
 /** Format Date sang YYYY-MM-DD */
@@ -46,13 +51,16 @@ export default function CinemasPage() {
   const [selectedCity, setSelectedCity] = useState('Tất cả')
   const [searchQuery, setSearchQuery] = useState('')
 
-  // 3. Rạp đang được chọn (Mặc định: rạp đầu tiên)
-  const [selectedCinemaId, setSelectedCinemaId] = useState<string>(MOCK_CINEMAS[0].id)
+  // 3. Dữ liệu rạp, phim và suất chiếu thực tế
+  const [theaters, setTheaters] = useState<AdminTheater[]>([])
+  const [movies, setMovies] = useState<AdminMovie[]>([])
+  const [movieSchedules, setMovieSchedules] = useState<CinemaMovieSchedule[]>([])
+  const [selectedCinemaId, setSelectedCinemaId] = useState<string>('')
 
   // 4. Ngày chiếu đang được chọn (Mặc định: hôm nay)
   const [selectedDate, setSelectedDate] = useState<string>(getTodayString)
 
-  // 5. Trạng thái Loading Shimmer khi chuyển rạp hoặc chuyển ngày
+  // 5. Trạng thái Loading
   const [isLoading, setIsLoading] = useState(false)
 
   // Cập nhật tiêu đề trang
@@ -61,22 +69,158 @@ export default function CinemasPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [])
 
+  // Nạp danh sách rạp và danh sách phim
+  useEffect(() => {
+    let isCancelled = false
+
+    Promise.all([
+      theaterApiService.getPublicTheaters(),
+      movieApiService.getMovies({ pageSize: 100 }),
+    ])
+      .then(([thList, mvRes]) => {
+        if (!isCancelled) {
+          setTheaters(thList || [])
+          setMovies(mvRes.items || [])
+          if (thList && thList.length > 0) {
+            setSelectedCinemaId((prev) => prev || thList[0].id)
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Lỗi khi tải danh sách rạp và phim:', err)
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  // Chuyển đổi AdminTheater sang CinemaWithShowtimes
+  const cinemas: CinemaWithShowtimes[] = useMemo(() => {
+    return theaters.map((t) => ({
+      id: t.id,
+      name: t.name,
+      address: t.address,
+      city: t.city,
+      imageUrl:
+        t.imageUrl ||
+        'https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=800',
+      hotline: t.hotline || '1900 6868',
+      openingHours: t.openingHours || '08:00 - 24:00 (Hàng ngày)',
+      totalRooms: t.totalRooms || 6,
+      features:
+        t.features && t.features.length > 0
+          ? t.features
+          : ['IMAX Laser', 'Dolby Atmos', 'Ghế VIP'],
+      mapUrl: `https://maps.google.com/?q=${encodeURIComponent(
+        t.name + ' ' + t.address
+      )}`,
+      showtimes: [],
+      movieSchedules: t.id === selectedCinemaId ? movieSchedules : [],
+    }))
+  }, [theaters, selectedCinemaId, movieSchedules])
+
+  // Nạp lịch chiếu cho rạp đang chọn vào ngày đã chọn
+  useEffect(() => {
+    if (!selectedCinemaId) {
+      setMovieSchedules([])
+      return
+    }
+
+    let isCancelled = false
+    setIsLoading(true)
+
+    showtimeApiService
+      .getAdminShowtimes({
+        theaterId: selectedCinemaId,
+        dateFrom: selectedDate,
+        dateTo: selectedDate,
+        status: 'selling',
+        pageSize: 100,
+      })
+      .then((res) => {
+        if (isCancelled) return
+        const activeItems = (res.items || []).filter(
+          (st) => st.status === 'selling'
+        )
+
+        // Gom các suất chiếu theo movieId
+        const groupedByMovie = new Map<string, typeof activeItems>()
+        for (const st of activeItems) {
+          if (!groupedByMovie.has(st.movieId)) {
+            groupedByMovie.set(st.movieId, [])
+          }
+          groupedByMovie.get(st.movieId)!.push(st)
+        }
+
+        const schedules: CinemaMovieSchedule[] = []
+        groupedByMovie.forEach((stList, movieId) => {
+          const mv = movies.find(
+            (m) => m.id.toLowerCase() === movieId.toLowerCase()
+          )
+          const showtimeItems: ShowtimeItem[] = stList.map((st) => ({
+            id: st.id,
+            movieId,
+            cinemaId: selectedCinemaId,
+            roomId: st.auditoriumId,
+            startTime: st.startTime,
+            endTime: st.endTime,
+            format: st.format,
+            language: st.language,
+            price: st.basePrice,
+          }))
+
+          schedules.push({
+            movieId,
+            movieTitle:
+              mv?.title ||
+              stList[0]?.movieTitle ||
+              `Phim #${movieId.slice(0, 8)}`,
+            originalTitle: mv?.originalTitle,
+            posterUrl:
+              mv?.posterUrl ||
+              'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400',
+            ageRating: mv?.ageRating || 'P',
+            duration: mv?.duration || stList[0]?.movieDuration || 120,
+            genres: mv?.genres || [],
+            rating: mv?.rating || 8.5,
+            showtimes: showtimeItems.sort((a, b) =>
+              a.startTime.localeCompare(b.startTime)
+            ),
+          })
+        })
+
+        setMovieSchedules(schedules)
+      })
+      .catch((err) => {
+        console.error('Lỗi khi tải lịch chiếu rạp:', err)
+        if (!isCancelled) setMovieSchedules([])
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false)
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [selectedCinemaId, selectedDate, movies])
+
   // Đếm số lượng rạp theo từng thành phố
   const cityCounts = useMemo(() => {
     const counts: Record<string, number> = {
-      'Tất cả': MOCK_CINEMAS.length,
+      'Tất cả': cinemas.length,
     }
     CITIES.forEach((c) => {
       if (c !== 'Tất cả') {
-        counts[c] = MOCK_CINEMAS.filter((cinema) => cinema.city === c).length
+        counts[c] = cinemas.filter((cinema) => cinema.city === c).length
       }
     })
     return counts
-  }, [])
+  }, [cinemas])
 
   // Danh sách rạp sau khi lọc theo thành phố và từ khóa tìm kiếm
   const filteredCinemas = useMemo(() => {
-    return MOCK_CINEMAS.filter((cinema) => {
+    return cinemas.filter((cinema) => {
       if (selectedCity !== 'Tất cả' && cinema.city !== selectedCity) {
         return false
       }
@@ -90,29 +234,25 @@ export default function CinemasPage() {
       }
       return true
     })
-  }, [selectedCity, searchQuery])
+  }, [cinemas, selectedCity, searchQuery])
 
   // Rạp chiếu hiện tại đang được chọn
   const selectedCinema = useMemo(() => {
-    const found = MOCK_CINEMAS.find((c) => c.id === selectedCinemaId)
-    if (found) return found
-    // Nếu rạp hiện tại bị filter ẩn đi, lấy rạp đầu tiên trong filteredCinemas
-    return filteredCinemas[0] || MOCK_CINEMAS[0]
-  }, [selectedCinemaId, filteredCinemas])
+    const found = cinemas.find((c) => c.id === selectedCinemaId)
+    if (found) return { ...found, movieSchedules }
+    return filteredCinemas[0] ? { ...filteredCinemas[0], movieSchedules } : cinemas[0] ? { ...cinemas[0], movieSchedules } : null
+  }, [selectedCinemaId, cinemas, filteredCinemas, movieSchedules])
 
   // Đổi rạp chiếu
   const handleSelectCinema = (cinema: CinemaWithShowtimes) => {
     if (cinema.id === selectedCinemaId) return
-    setIsLoading(true)
     setSelectedCinemaId(cinema.id)
-    setTimeout(() => setIsLoading(false), 150)
   }
 
   // Đổi thành phố
   const handleCityChange = (city: string) => {
     setSelectedCity(city)
-    // Tự động chọn rạp đầu tiên của thành phố đó
-    const firstInCity = MOCK_CINEMAS.find((c) => city === 'Tất cả' || c.city === city)
+    const firstInCity = cinemas.find((c) => city === 'Tất cả' || c.city === city)
     if (firstInCity) {
       setSelectedCinemaId(firstInCity.id)
     }
@@ -127,6 +267,7 @@ export default function CinemasPage() {
 
   // Xử lý khi click vào một suất chiếu cụ thể -> Chuyển sang Chọn Ghế với đầy đủ thông tin
   const handleSelectShowtime = (schedule: CinemaMovieSchedule, showtime: ShowtimeItem) => {
+    if (!selectedCinema) return
     navigate(`/booking/${showtime.id}/seats`, {
       state: {
         movie: {
@@ -137,7 +278,7 @@ export default function CinemasPage() {
         cinemaName: selectedCinema.name,
         showtime: showtime.startTime,
         date: selectedDate,
-        roomName: 'Phòng chiếu 02 - ScreenX',
+        roomName: showtime.roomId ? `Phòng chiếu` : 'Phòng chiếu',
       },
     })
   }

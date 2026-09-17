@@ -10,6 +10,7 @@ import { MovieEmptyState } from '@/components/movie/movie-empty-state'
 import { Button } from '@/components/ui/button'
 import type { Movie } from '@/types/movie'
 import { movieApiService } from '@/services/movie-api.service'
+import { DEFAULT_MOVIE_GENRES } from '@/constants/filters'
 
 const INITIAL_FILTER_STATE: MovieFilterState = {
   genre: 'all',
@@ -63,13 +64,25 @@ export default function MoviesPage() {
       })
   }, [])
 
+  // Danh sách thể loại động kết hợp giữa mặc định và dữ liệu phim thực tế
+  const availableGenres = useMemo(() => {
+    const genreSet = new Set<string>(['Tất cả'])
+    DEFAULT_MOVIE_GENRES.forEach((g) => genreSet.add(g))
+    movieList.forEach((m) => {
+      m.genres?.forEach((g) => {
+        if (g && g.trim()) genreSet.add(g.trim())
+      })
+    })
+    return Array.from(genreSet)
+  }, [movieList])
+
   // Lọc và sắp xếp danh sách phim
   const filteredMovies = useMemo(() => {
     return movieList.filter((movie) => {
       // 1. Lọc theo từ khóa tìm kiếm (tên phim, thể loại)
       if (searchQuery.trim()) {
         const query = searchQuery.toLowerCase().trim()
-        const matchTitle = movie.title.toLowerCase().includes(query)
+        const matchTitle = (movie.title || '').toLowerCase().includes(query)
         const matchGenre = movie.genres?.some((g) =>
           g.toLowerCase().includes(query)
         )
@@ -80,14 +93,18 @@ export default function MoviesPage() {
 
       // 2. Lọc theo trạng thái (Đang chiếu / Sắp chiếu)
       if (filters.status !== 'all') {
-        if (movie.status !== filters.status) {
+        const movieStatus = (movie.status || '').toLowerCase().replace('_', '-')
+        const targetStatus = filters.status.toLowerCase().replace('_', '-')
+        if (movieStatus !== targetStatus) {
           return false
         }
       }
 
       // 3. Lọc theo thể loại
       if (filters.genre !== 'all' && filters.genre !== 'Tất cả') {
-        if (!movie.genres?.includes(filters.genre)) {
+        const targetGenre = filters.genre.toLowerCase()
+        const hasGenre = movie.genres?.some((g) => g.toLowerCase() === targetGenre)
+        if (!hasGenre) {
           return false
         }
       }
@@ -104,7 +121,7 @@ export default function MoviesPage() {
       // 'popular' hoặc mặc định
       return 0
     })
-  }, [searchQuery, filters])
+  }, [movieList, searchQuery, filters])
 
   // Cập nhật bộ lọc kèm hiệu ứng loading nhẹ (mô phỏng trạng thái tải)
   const handleFilterChange = (newFilters: MovieFilterState) => {
@@ -150,6 +167,7 @@ export default function MoviesPage() {
           values={filters}
           onChange={handleFilterChange}
           onReset={handleResetAll}
+          genres={availableGenres}
         />
       </div>
 
@@ -158,7 +176,7 @@ export default function MoviesPage() {
         <span>
           Tìm thấy <span className="font-semibold text-foreground">{filteredMovies.length}</span> phim
         </span>
-        {(searchQuery || filters.genre !== 'all' || filters.status !== 'all') && (
+        {(searchQuery || (filters.genre !== 'all' && filters.genre !== 'Tất cả') || filters.status !== 'all') && (
           <Button
             type="button"
             variant="link"

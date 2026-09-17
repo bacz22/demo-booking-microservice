@@ -28,10 +28,9 @@ import type {
   TheaterPaginationResult,
 } from '@/types/admin-theater'
 import {
-  getAdminTheaters,
-  getAllCities,
-  updateTheaterStatus,
-} from '@/mocks/admin/theaters'
+  theaterApiService,
+  DEFAULT_POPULAR_CITIES,
+} from '@/services/theater-api.service'
 import { AdminPageHeader } from '@/components/admin/common/admin-page-header'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AdminPagination } from '@/components/admin/common/admin-pagination'
@@ -98,26 +97,30 @@ export default function AdminTheaterList() {
     [searchParams, setSearchParams]
   )
 
-  // Load cities once
+  // Load cities
   useEffect(() => {
-    setCities(getAllCities())
-  }, [refreshIndex])
+    setCities(DEFAULT_POPULAR_CITIES)
+  }, [])
 
   // Load theaters
   useEffect(() => {
     let isCancelled = false
     setIsLoading(true)
 
-    getAdminTheaters(filters)
+    theaterApiService
+      .getAdminTheaters(filters)
       .then((res) => {
         if (!isCancelled) {
           setData(res)
           setIsLoading(false)
+          // Dynamically expand cities list from loaded items
+          const itemsCities = Array.from(new Set(res.items.map((t) => t.city).filter(Boolean)))
+          setCities((prev) => Array.from(new Set([...prev, ...itemsCities])))
         }
       })
-      .catch(() => {
+      .catch((err: any) => {
         if (!isCancelled) {
-          toast.error('Không thể tải danh sách cụm rạp. Vui lòng thử lại.')
+          toast.error(err?.message || 'Không thể tải danh sách cụm rạp. Vui lòng thử lại.')
           setIsLoading(false)
         }
       })
@@ -145,8 +148,8 @@ export default function AdminTheaterList() {
   // Quick Status update
   const handleQuickStatus = async (theater: AdminTheater, status: AdminTheaterStatus) => {
     setOpenActionMenuId(null)
-    const success = await updateTheaterStatus(theater.id, status)
-    if (success) {
+    try {
+      await theaterApiService.updateTheaterStatus(theater.id, theater, status)
       toast.success(
         status === 'active'
           ? `Đã kích hoạt hoạt động cho rạp "${theater.name}"!`
@@ -155,6 +158,8 @@ export default function AdminTheaterList() {
             : `Đã tạm ngưng vận hành rạp "${theater.name}"!`
       )
       triggerRefresh()
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể cập nhật trạng thái rạp')
     }
   }
 

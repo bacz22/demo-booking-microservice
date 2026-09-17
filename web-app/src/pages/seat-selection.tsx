@@ -1,49 +1,129 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
-import { ArrowLeft, AlertCircle } from 'lucide-react'
+import { ArrowLeft, AlertCircle, Film } from 'lucide-react'
 import { SeatMap } from '@/components/booking/seat-map'
 import { SeatSelectionSummary } from '@/components/booking/seat-selection-summary'
 import { Button } from '@/components/ui/button'
-import { findCinemaByShowtimeId, MOCK_CINEMAS } from '@/mocks/cinemas'
-import { HERO_MOVIE } from '@/mocks/movies'
+import { Skeleton } from '@/components/ui/skeleton'
+import { EmptyState } from '@/components/ui/empty-state'
 import { toast } from '@/lib/toast'
 import { formatPrice } from '@/lib/utils'
-import type { SeatItem } from '@/types/seat'
+import type { SeatItem, SeatRow } from '@/types/seat'
+import type { Movie } from '@/types/movie'
+import {
+  showtimeApiService,
+  mapBackendSeatMapToSeatRows,
+  isoToLocalTime,
+  isoToLocalDate,
+  type BackendShowtimeResponse,
+  type BackendShowtimeSeatMapResponse,
+} from '@/services/showtime-api.service'
+import { movieApiService } from '@/services/movie-api.service'
 
 export default function SeatSelectionPage() {
   const { showtimeId } = useParams<{ showtimeId: string }>()
   const navigate = useNavigate()
   const location = useLocation()
 
-  // 1. Dữ liệu rạp và suất chiếu (từ showtimeId)
-  const showtimeData = useMemo(() => {
-    if (showtimeId) {
-      const found = findCinemaByShowtimeId(showtimeId)
-      if (found) return found
+  // 1. Dữ liệu nạp từ API
+  const [showtime, setShowtime] = useState<BackendShowtimeResponse | null>(null)
+  const [seatMap, setSeatMap] = useState<BackendShowtimeSeatMapResponse | null>(null)
+  const [movie, setMovie] = useState<Partial<Movie> | null>(location.state?.movie || null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+
+  // 2. Tải thông tin suất chiếu, sơ đồ ghế và phim từ Backend
+  useEffect(() => {
+    if (!showtimeId) {
+      setIsLoading(false)
+      setFetchError('Không tìm thấy mã suất chiếu.')
+      return
     }
-    // Fallback nếu showtimeId không tồn tại trong mock
-    return {
-      cinema: MOCK_CINEMAS[0],
-      showtime: MOCK_CINEMAS[0].showtimes[0],
+
+    let isCancelled = false
+    setIsLoading(true)
+    setFetchError(null)
+
+    Promise.all([
+      showtimeApiService.getPublicShowtimeById(showtimeId),
+      showtimeApiService.getPublicShowtimeSeats(showtimeId),
+    ])
+      .then(async ([st, sm]) => {
+        if (isCancelled) return
+        setShowtime(st)
+        setSeatMap(sm)
+
+        // Nếu chưa có thông tin phim trong navigation state, nạp thêm từ Movie Service
+        if (!movie?.title && st.movieId) {
+          try {
+            const mv = await movieApiService.getMovieById(st.movieId)
+            if (!isCancelled && mv) {
+              setMovie({
+                id: mv.id,
+                title: mv.title,
+                posterUrl: mv.posterUrl,
+                duration: mv.duration,
+                ageRating: mv.ageRating,
+              })
+            }
+          } catch (err) {
+            console.warn('Không thể nạp thêm thông tin chi tiết phim:', err)
+          }
+        }
+      })
+      .catch((err) => {
+        console.error('Lỗi khi nạp thông tin suất chiếu hoặc sơ đồ ghế:', err)
+        if (!isCancelled) {
+          setFetchError(
+            err?.message || 'Không thể tải thông tin suất chiếu hoặc phòng chiếu từ hệ thống.'
+          )
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsLoading(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
     }
   }, [showtimeId])
 
-  const { cinema, showtime } = showtimeData
+  // 3. Thông tin hiển thị phái sinh
+  const movieTitle = movie?.title || showtime?.movieTitle || 'Suất chiếu phim'
+  const posterUrl = movie?.posterUrl || 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400'
+  const cinemaName = location.state?.cinemaName || showtime?.theaterName || 'CineBook Cinema'
+  const roomName = location.state?.roomName || showtime?.auditoriumName || 'Phòng chiếu'
+  const currentDate = location.state?.date || (showtime?.startTime ? isoToLocalDate(showtime.startTime) : 'Hôm nay')
+  const startTime = showtime?.startTime ? isoToLocalTime(showtime.startTime) : '10:00'
+  const endTime = showtime?.endTime ? isoToLocalTime(showtime.endTime) : ''
+  const format = showtime?.auditoriumFormat || showtime?.format || '2D'
 
-  // 2. Dữ liệu phim (ưu tiên lấy từ state, fallback từ showtimeData.movie, cuối cùng là HERO_MOVIE)
-  const movie = location.state?.movie || showtimeData.movie || HERO_MOVIE
-  const roomName = location.state?.roomName || 'Phòng chiếu 02 - ScreenX'
-  const currentDate = location.state?.date || 'Hôm nay, 14/09/2026'
+  // 4. Chuyển đổi sơ đồ ghế từ API sang cấu trúc SeatRow[]
+  const seatRows: SeatRow[] = useMemo(() => {
+    if (!seatMap) return []
+    return mapBackendSeatMapToSeatRows(seatMap)
+  }, [seatMap])
 
-  // 3. Quản lý trạng thái chọn ghế bằng React State
+  // 5. Bảng giá vé động từ suất chiếu
+  const legendPrices = useMemo(() => {
+    return {
+      standard: seatMap?.prices?.STANDARD || showtime?.priceStandard || 90000,
+      vip: seatMap?.prices?.VIP || showtime?.priceVip || 110000,
+      couple: seatMap?.prices?.COUPLE || showtime?.priceCouple || 180000,
+    }
+  }, [seatMap, showtime])
+
+  // 6. Quản lý trạng thái chọn ghế
   const [selectedSeats, setSelectedSeats] = useState<string[]>([])
   const [selectedSeatObjects, setSelectedSeatObjects] = useState<SeatItem[]>([])
   const [maxLimitAlert, setMaxLimitAlert] = useState(false)
 
   // Cập nhật tiêu đề trang
   useEffect(() => {
-    document.title = `Chọn ghế - ${movie.title} | CineBook`
-  }, [movie])
+    document.title = `Chọn ghế - ${movieTitle} | CineBook`
+  }, [movieTitle])
 
   // Xử lý chọn / bỏ chọn ghế (giới hạn tối đa 8 ghế)
   const handleSeatSelect = (seatNumber: string, seat: SeatItem) => {
@@ -67,8 +147,11 @@ export default function SeatSelectionPage() {
 
   // Tính tổng tiền dựa trên giá của từng ghế đã chọn
   const totalPrice = useMemo(() => {
-    return selectedSeatObjects.reduce((sum, seat) => sum + (seat.price || 75000), 0)
-  }, [selectedSeatObjects])
+    return selectedSeatObjects.reduce((sum, seat) => {
+      const price = seat.price || legendPrices.standard
+      return sum + price
+    }, 0)
+  }, [selectedSeatObjects, legendPrices])
 
   // Điều hướng sang trang Checkout khi nhấn Tiếp tục
   const handleContinue = () => {
@@ -76,28 +159,80 @@ export default function SeatSelectionPage() {
 
     navigate('/checkout', {
       state: {
-        movieTitle: movie.title,
-        posterUrl: movie.posterUrl,
-        cinemaName: cinema.name,
-        showtime: showtime.startTime,
-        date: currentDate,
+        showtimeId,
+        movieId: movie?.id || showtime?.movieId,
+        movieTitle,
+        posterUrl,
+        cinemaName,
         roomName,
+        showtime: endTime ? `${startTime} - ${endTime}` : startTime,
+        startTime,
+        date: currentDate,
         seats: selectedSeats,
+        selectedSeatObjects,
         total: totalPrice,
+        format,
       },
     })
   }
 
+  if (isLoading) {
+    return (
+      <div className="space-y-6 pb-24 lg:pb-16 animate-pulse">
+        <Skeleton className="h-5 w-48 rounded-lg" />
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
+          <div className="lg:col-span-8 space-y-6">
+            <div className="space-y-2">
+              <Skeleton className="h-8 w-64 rounded-xl" />
+              <Skeleton className="h-4 w-40 rounded" />
+            </div>
+            <Skeleton className="h-[420px] w-full rounded-2xl" />
+          </div>
+          <div className="hidden lg:block lg:col-span-4">
+            <Skeleton className="h-[400px] w-full rounded-2xl" />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (fetchError || !showtime) {
+    return (
+      <div className="space-y-8 pb-16">
+        <div>
+          <Link
+            to="/cinemas"
+            className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>Quay lại lịch chiếu rạp</span>
+          </Link>
+        </div>
+
+        <EmptyState
+          icon={Film}
+          title="Không tìm thấy suất chiếu"
+          description={fetchError || 'Suất chiếu không tồn tại hoặc đã kết thúc.'}
+          action={{
+            label: 'Xem lịch chiếu khác',
+            onClick: () => navigate('/cinemas'),
+          }}
+          className="py-16"
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 pb-24 lg:pb-16">
-      {/* Nút quay lại trang chi tiết phim */}
+      {/* Nút quay lại trang chi tiết phim hoặc lịch chiếu */}
       <div>
         <Link
-          to={`/movies/${movie.id}`}
+          to={movie?.id ? `/movies/${movie.id}` : '/cinemas'}
           className="inline-flex items-center gap-2 text-xs sm:text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span>Quay lại thông tin phim &amp; suất chiếu</span>
+          <span>Quay lại thông tin phim &amp; lịch chiếu</span>
         </Link>
       </div>
 
@@ -124,19 +259,21 @@ export default function SeatSelectionPage() {
                 Chọn ghế ngồi
               </h1>
               <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
-                {cinema.name} • {roomName}
+                {cinemaName} • {roomName}
               </p>
             </div>
 
             <span className="text-xs font-semibold text-primary">
-              Định dạng {showtime.format || '2D'} • {showtime.language || 'Phụ đề'}
+              Định dạng {format} • {startTime}{endTime ? ` - ${endTime}` : ''}
             </span>
           </div>
 
-          {/* Component SeatMap tái sử dụng Seat, CinemaScreen và SeatLegend */}
+          {/* Component SeatMap với hàng ghế thực tế từ Backend */}
           <SeatMap
             selectedSeats={selectedSeats}
             onSeatSelect={handleSeatSelect}
+            rows={seatRows.length > 0 ? seatRows : undefined}
+            prices={legendPrices}
             roomName={roomName}
           />
         </div>
@@ -144,14 +281,14 @@ export default function SeatSelectionPage() {
         {/* CỘT PHẢI: Tóm tắt đặt vé (SeatSelectionSummary) dính cố định khi cuộn */}
         <div className="hidden lg:block lg:col-span-4 lg:sticky lg:top-24">
           <SeatSelectionSummary
-            movieTitle={movie.title}
-            posterUrl={movie.posterUrl}
-            cinemaName={cinema.name}
+            movieTitle={movieTitle}
+            posterUrl={posterUrl}
+            cinemaName={cinemaName}
             roomName={roomName}
             date={currentDate}
-            showtime={showtime.startTime}
+            showtime={endTime ? `${startTime} - ${endTime}` : startTime}
             seats={selectedSeats}
-            ticketPrice={75000}
+            ticketPrice={legendPrices.standard}
             total={totalPrice}
             onContinue={handleContinue}
             continueDisabled={selectedSeats.length === 0}

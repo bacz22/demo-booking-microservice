@@ -136,6 +136,13 @@ export interface DatePickerProps {
   clearable?: boolean
   /** Tên trường form */
   name?: string
+  /**
+   * Controlled open state — dùng khi cần điều phối nhiều picker cùng lúc
+   * (vd: date-range với 2 DatePicker để đảm bảo chỉ 1 picker mở tại một thời điểm)
+   */
+  open?: boolean
+  /** Callback khi trạng thái mở thay đổi (dùng kèm với `open`) */
+  onOpenChange?: (open: boolean) => void
 }
 
 export const DatePicker: React.FC<DatePickerProps> = ({
@@ -153,13 +160,23 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   toYear = new Date().getFullYear(),
   clearable = true,
   name,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }) => {
   const fieldContext = useFormFieldContext()
   const id = propId || fieldContext?.id
   const error = Boolean(propError || fieldContext?.hasError)
 
   const [internalVal, setInternalVal] = useState(defaultValue || '')
-  const [isOpen, setIsOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+
+  // Nếu truyền prop `open` thì dùng controlled mode, ngược lại tự quản lý
+  const isControlled = controlledOpen !== undefined
+  const isOpen = isControlled ? controlledOpen : internalOpen
+  const setIsOpen = (open: boolean) => {
+    if (!isControlled) setInternalOpen(open)
+    controlledOnOpenChange?.(open)
+  }
 
   const selectedDateStr = value !== undefined ? value : internalVal
   const selectedDateObj = parseISODate(selectedDateStr)
@@ -439,7 +456,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               }
             }}
             className={cn(
-              'w-full flex items-center justify-between gap-2 rounded-xl border bg-background/60 px-4 py-2.5 text-sm text-foreground shadow-xs transition-all duration-150 cursor-text',
+              'w-full h-10 flex items-center justify-between gap-2 rounded-xl border bg-background/60 px-3.5 text-sm text-foreground shadow-xs transition-all duration-150 cursor-text',
               'hover:border-border hover:bg-background/80',
               isOpen && 'border-primary ring-2 ring-primary/25',
               error
@@ -489,7 +506,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                 onClick={(e) => {
                   e.stopPropagation()
                   if (!disabled) {
-                    setIsOpen((prev) => !prev)
+                    setIsOpen(!isOpen)
                   }
                 }}
                 className="p-1 hover:text-primary rounded-lg hover:bg-secondary cursor-pointer transition-colors"
@@ -724,6 +741,10 @@ export interface TimePickerProps {
   error?: boolean
   size?: 'sm' | 'md' | 'lg'
   className?: string
+  /** Trạng thái mở điều phối từ bên ngoài */
+  open?: boolean
+  /** Callback khi thay đổi trạng thái mở */
+  onOpenChange?: (open: boolean) => void
 }
 
 const HOURS_LIST = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'))
@@ -746,9 +767,27 @@ export const TimePicker: React.FC<TimePickerProps> = ({
   error = false,
   size = 'md',
   className,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }) => {
   const [internalVal, setInternalVal] = useState(defaultValue || '')
-  const [isOpen, setIsOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+
+  const isControlled = controlledOpen !== undefined
+  const isOpen = isControlled ? controlledOpen : internalOpen
+  const setIsOpen = (open: boolean) => {
+    if (!isControlled) setInternalOpen(open)
+    controlledOnOpenChange?.(open)
+  }
+
+  // Đồng bộ với value prop
+  const [prevValue, setPrevValue] = useState(value)
+  if (prevValue !== value) {
+    setPrevValue(value)
+    if (value !== undefined) {
+      setInternalVal(value)
+    }
+  }
 
   const hoursContainerRef = useRef<HTMLDivElement>(null)
   const minutesContainerRef = useRef<HTMLDivElement>(null)
@@ -939,6 +978,29 @@ export const TimePicker: React.FC<TimePickerProps> = ({
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Footer actions */}
+        <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              const now = new Date()
+              const h = String(now.getHours()).padStart(2, '0')
+              const m = String(now.getMinutes()).padStart(2, '0')
+              handleSelectTime(h, m)
+            }}
+            className="text-[11px] text-primary hover:underline font-semibold cursor-pointer"
+          >
+            Hiện tại
+          </button>
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            className="px-3 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors cursor-pointer shadow-xs"
+          >
+            Xong
+          </button>
         </div>
       </PopoverContent>
     </Popover>

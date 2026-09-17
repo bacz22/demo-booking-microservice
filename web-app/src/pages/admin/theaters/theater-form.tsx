@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useMemo } from 'react'
+import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft,
   Save,
   Building2,
   Phone,
-  Clock,
   Image,
   ImageOff,
   AlertCircle,
   Plus,
   X,
   Loader2,
+  MapPin,
+  Upload,
+  CheckCircle2,
 } from 'lucide-react'
 import type {
   AdminTheaterStatus,
@@ -19,15 +21,15 @@ import type {
   TheaterFormErrors,
 } from '@/types/admin-theater'
 import {
-  getAdminTheaterById,
-  createAdminTheater,
-  updateAdminTheater,
+  theaterApiService,
   DEFAULT_THEATER_FEATURES,
-} from '@/mocks/admin/theaters'
+} from '@/services/theater-api.service'
+import { mediaApiService } from '@/services/media-api.service'
 import { AdminPageHeader } from '@/components/admin/common/admin-page-header'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { OperatingHoursPicker } from '@/components/ui/operating-hours-picker'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -40,28 +42,79 @@ import {
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
-const POPULAR_CITIES = [
-  'TP. Hồ Chí Minh',
-  'Hà Nội',
-  'Đà Nẵng',
-  'Hải Phòng',
-  'Cần Thơ',
-  'Khánh Hòa',
-  'Bình Dương',
-  'Đồng Nai',
-  'Quảng Ninh',
-  'Huế',
-]
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function compressImageFile(file: File, maxDimension = 1600, quality = 0.85): Promise<File> {
+  return new Promise((resolve) => {
+    if (file.size < 300 * 1024) {
+      resolve(file)
+      return
+    }
+
+    const img = new window.Image()
+    const url = URL.createObjectURL(file)
+
+    const useOriginal = () => {
+      URL.revokeObjectURL(url)
+      resolve(file)
+    }
+
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+
+      let { width, height } = img
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width)
+          width = maxDimension
+        } else {
+          width = Math.round((width * maxDimension) / height)
+          height = maxDimension
+        }
+      }
+
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        resolve(file)
+        return
+      }
+
+      ctx.drawImage(img, 0, 0, width, height)
+      canvas.toBlob((blob) => {
+        if (!blob || blob.size >= file.size) {
+          resolve(file)
+          return
+        }
+
+        const baseName = file.name.replace(/\.[^.]+$/, '') || 'theater-image'
+        resolve(
+          new File([blob], `${baseName}.jpg`, {
+            type: 'image/jpeg',
+            lastModified: file.lastModified,
+          })
+        )
+      }, 'image/jpeg', quality)
+    }
+    img.onerror = useOriginal
+    img.src = url
+  })
+}
 
 const INITIAL_FORM_DATA: TheaterFormData = {
   name: '',
   address: '',
-  city: 'TP. Hồ Chí Minh',
-  hotline: '1900 6868',
-  openingHours: '08:00 - 01:00 (Hàng ngày)',
-  features: ['Dolby Atmos', 'Ghế Sweetbox Đôi', 'Bãi Đỗ Xe Ô Tô', 'Quầy Bắp Nước Cao Cấp'],
-  imageUrl:
-    'https://images.unsplash.com/photo-1517604931442-7e0c8ed2963c?w=800&auto=format&fit=crop&q=80',
+  city: '',
+  hotline: '',
+  openingHours: '',
+  features: [],
+  imageUrl: '',
   status: 'active',
 }
 
@@ -87,12 +140,67 @@ export default function AdminTheaterForm() {
   // Dirty Leave Modal
   const [showLeaveDialog, setShowLeaveDialog] = useState(false)
 
+  // File upload state for theater image
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [isDraggingImage, setIsDraggingImage] = useState(false)
+  const [uploadedFileName, setUploadedFileName] = useState('')
+
+  const handleImageFile = async (file: File) => {
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      toast.error('Vui lòng chọn tệp hình ảnh hợp lệ (JPG, PNG, WEBP, AVIF)')
+      return
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Kích thước ảnh tối đa là 15MB')
+      return
+    }
+
+    try {
+      setIsUploadingImage(true)
+      // 1. Thử nén ảnh và tải lên Media Service qua Backend
+      try {
+        const uploadFile = await compressImageFile(file, 1600, 0.85)
+        const res = await mediaApiService.uploadImage(uploadFile)
+        if (res.secureUrl) {
+          setUploadedFileName(`${file.name} (${formatFileSize(file.size)})`)
+          setImgFailed(false)
+          handleChange('imageUrl', res.secureUrl)
+          toast.success(`Đã tải lên ảnh cụm rạp: "${file.name}"`)
+          return
+        }
+      } catch (apiErr) {
+        console.warn('Backend upload chưa sẵn sàng, sử dụng fallback blob preview:', apiErr)
+      }
+
+      // 2. Fallback blob URL cho preview
+      const blobUrl = URL.createObjectURL(file)
+      setUploadedFileName(`${file.name} (${formatFileSize(file.size)})`)
+      setImgFailed(false)
+      handleChange('imageUrl', blobUrl)
+      toast.success(`Đã chọn ảnh "${file.name}" từ thiết bị`)
+    } catch {
+      toast.error('Lỗi khi xử lý file ảnh từ máy')
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
+
+  const handleClearImage = () => {
+    setUploadedFileName('')
+    setImgFailed(false)
+    handleChange('imageUrl', '')
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   // Load existing theater if in edit mode
   useEffect(() => {
     if (!theaterId) return
     let isCancelled = false
 
-    getAdminTheaterById(theaterId)
+    theaterApiService
+      .getAdminTheaterById(theaterId)
       .then((t) => {
         if (isCancelled) return
         if (!t) {
@@ -114,9 +222,9 @@ export default function AdminTheaterForm() {
         setInitialData(data)
         setIsLoading(false)
       })
-      .catch(() => {
+      .catch((err: any) => {
         if (!isCancelled) {
-          toast.error('Lỗi khi tải thông tin cụm rạp')
+          toast.error(err?.message || 'Lỗi khi tải thông tin cụm rạp')
           navigate('/admin/theaters')
         }
       })
@@ -172,8 +280,16 @@ export default function AdminTheaterForm() {
         return undefined
 
       case 'imageUrl':
-        if (val && !/^https?:\/\/.+/i.test(val.trim())) {
-          return 'Đường dẫn ảnh phải bắt đầu bằng http:// hoặc https://'
+        if (val && typeof val === 'string' && val.trim()) {
+          if (
+            !val.startsWith('http://') &&
+            !val.startsWith('https://') &&
+            !val.startsWith('/') &&
+            !val.startsWith('data:') &&
+            !val.startsWith('blob:')
+          ) {
+            return 'Đường dẫn hoặc file ảnh cụm rạp không hợp lệ'
+          }
         }
         return undefined
 
@@ -252,19 +368,19 @@ export default function AdminTheaterForm() {
     try {
       setIsSubmitting(true)
       if (isEditMode && theaterId) {
-        const updated = await updateAdminTheater(theaterId, formData)
+        const updated = await theaterApiService.updateTheater(theaterId, formData)
         if (updated) {
           toast.success(`Đã lưu thay đổi cho rạp "${updated.name}" thành công!`)
           navigate(`/admin/theaters/${theaterId}`)
         }
       } else {
-        const created = await createAdminTheater(formData)
+        const created = await theaterApiService.createTheater(formData)
         toast.success(`Đã thêm cụm rạp mới "${created.name}" thành công!`)
         navigate(`/admin/theaters/${created.id}`)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error(err)
-      toast.error('Không thể lưu thông tin cụm rạp. Vui lòng thử lại.')
+      toast.error(err?.message || 'Không thể lưu thông tin cụm rạp. Vui lòng thử lại.')
     } finally {
       setIsSubmitting(false)
     }
@@ -370,21 +486,17 @@ export default function AdminTheaterForm() {
                 <span>Thành phố / Tỉnh thành</span>
                 <span className="text-destructive">*</span>
               </label>
-              <Select
+              <Input
+                id="theater-city"
                 value={formData.city}
-                onValueChange={(val) => handleChange('city', val)}
-              >
-                <SelectTrigger id="theater-city" className="h-10 text-xs rounded-xl bg-card border-border/70">
-                  <SelectValue placeholder="Chọn thành phố" />
-                </SelectTrigger>
-                <SelectContent>
-                  {POPULAR_CITIES.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(e) => handleChange('city', e.target.value)}
+                onBlur={() => handleBlur('city')}
+                placeholder="Nhập tên thành phố (ví dụ: TP. Hồ Chí Minh, Hà Nội, Đà Nẵng...)"
+                error={touched.city ? errors.city : undefined}
+                leftIcon={<MapPin className="w-4 h-4 text-muted-foreground" />}
+                className="h-10 text-xs rounded-xl"
+                required
+              />
             </div>
 
             {/* Hotline */}
@@ -407,13 +519,11 @@ export default function AdminTheaterForm() {
               <label htmlFor="theater-hours" className="text-xs font-bold text-foreground">
                 Khung giờ hoạt động
               </label>
-              <Input
+              <OperatingHoursPicker
                 id="theater-hours"
                 value={formData.openingHours}
-                onChange={(e) => handleChange('openingHours', e.target.value)}
-                placeholder="Ví dụ: 08:00 - 01:00 (Hàng ngày)"
-                leftIcon={<Clock className="w-4 h-4 text-muted-foreground" />}
-                className="h-10 text-xs rounded-xl"
+                onChange={(val) => handleChange('openingHours', val)}
+                placeholder="Chọn khung giờ hoạt động (Ví dụ: 08:30 - 23:30)"
               />
             </div>
           </div>
@@ -582,69 +692,169 @@ export default function AdminTheaterForm() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            {/* Image URL */}
-            <div className="space-y-1.5">
-              <label htmlFor="theater-image-url" className="text-xs font-bold text-foreground flex items-center gap-1">
-                <span>URL Ảnh Không Gian Cụm Rạp (16:9)</span>
-                <span className="text-destructive">*</span>
-              </label>
-              <Input
-                id="theater-image-url"
-                value={formData.imageUrl}
-                onChange={(e) => handleChange('imageUrl', e.target.value)}
-                onBlur={() => handleBlur('imageUrl')}
-                placeholder="https://images.unsplash.com/..."
-                error={touched.imageUrl ? errors.imageUrl : undefined}
-                className="h-10 text-xs rounded-xl"
-                required
-              />
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Cột trái: Bộ chọn ảnh từ máy & Trạng thái */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-foreground flex items-center gap-1">
+                  <span>Ảnh Không Gian Cụm Rạp (16:9)</span>
+                  <span className="text-destructive">*</span>
+                </label>
 
-            {/* Status */}
-            <div className="space-y-1.5">
-              <label htmlFor="theater-status" className="text-xs font-bold text-foreground">
-                Trạng thái hoạt động
-              </label>
-              <Select
-                value={formData.status}
-                onValueChange={(val) => handleChange('status', val as AdminTheaterStatus)}
-              >
-                <SelectTrigger id="theater-status" className="h-10 text-xs rounded-xl bg-card border-border/70">
-                  <SelectValue placeholder="Chọn trạng thái" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Đang hoạt động (Mở cửa bán vé bình thường)</SelectItem>
-                  <SelectItem value="maintenance">Đang bảo trì cơ sở vật chất (Tạm dừng suất)</SelectItem>
-                  <SelectItem value="inactive">Tạm ngưng vận hành (Đóng cửa tạm thời)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Image Live Preview */}
-          <div className="space-y-2 pt-2">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-              <Image className="w-3.5 h-3.5 text-primary" />
-              <span>Xem trước hình ảnh cụm rạp (Live Image Preview)</span>
-            </h3>
-
-            <div className="w-full max-w-md aspect-[16/9] rounded-2xl overflow-hidden border border-border/70 bg-secondary/30 shadow-sm relative flex items-center justify-center">
-              {formData.imageUrl && !imgFailed ? (
-                <img
-                  src={formData.imageUrl}
-                  alt="Xem trước rạp"
-                  className="w-full h-full object-cover"
-                  onError={() => setImgFailed(true)}
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/avif"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) handleImageFile(file)
+                  }}
                 />
-              ) : (
-                <div className="p-4 text-center space-y-1 text-muted-foreground">
-                  <ImageOff className="w-8 h-8 mx-auto opacity-50" />
-                  <p className="text-xs">
-                    {imgFailed ? 'Không thể tải ảnh từ URL' : 'Chưa có ảnh không gian rạp'}
-                  </p>
+
+                {/* Chế độ chọn ảnh từ máy (Dropzone) */}
+                <div>
+                  {formData.imageUrl && !imgFailed ? (
+                    <div className="p-3.5 rounded-xl border border-border/80 bg-secondary/20 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-12 h-9 rounded-lg overflow-hidden border border-border/60 shrink-0 bg-secondary/40">
+                          <img src={formData.imageUrl} alt="Thumbnail" className="w-full h-full object-cover" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground truncate">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                            <span className="truncate">{uploadedFileName || 'Ảnh cụm rạp đã chọn'}</span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground truncate">Tỷ lệ 16:9 • Đã tải thành công</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isUploadingImage}
+                          className="h-8 px-2.5 text-xs rounded-xl gap-1 cursor-pointer"
+                        >
+                          <Upload className="w-3.5 h-3.5" />
+                          <span>Đổi ảnh</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={handleClearImage}
+                          className="h-8 px-2 text-xs rounded-xl text-destructive hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                          title="Xóa ảnh"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => fileInputRef.current?.click()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault()
+                          fileInputRef.current?.click()
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        setIsDraggingImage(true)
+                      }}
+                      onDragLeave={() => setIsDraggingImage(false)}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        setIsDraggingImage(false)
+                        const file = e.dataTransfer.files?.[0]
+                        if (file) handleImageFile(file)
+                      }}
+                      className={cn(
+                        'border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all flex flex-col items-center justify-center min-h-[140px] space-y-2',
+                        isDraggingImage
+                          ? 'border-primary bg-primary/10'
+                          : 'border-border/80 hover:border-primary/60 bg-secondary/15 hover:bg-secondary/30'
+                      )}
+                    >
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-xs">
+                        {isUploadingImage ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : (
+                          <Upload className="w-5 h-5" />
+                        )}
+                      </div>
+                      <div className="space-y-0.5">
+                        <p className="text-xs font-semibold text-foreground">
+                          {isUploadingImage ? 'Đang tải ảnh lên hệ thống...' : 'Nhấn để chọn ảnh từ máy'}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">hoặc kéo thả tệp hình ảnh vào đây</p>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground/70">Hỗ trợ JPG, PNG, WEBP (tối đa 15MB)</span>
+                    </div>
+                  )}
+
+                  {touched.imageUrl && errors.imageUrl && (
+                    <p className="text-[11px] text-destructive flex items-center gap-1 pt-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{errors.imageUrl}</span>
+                    </p>
+                  )}
                 </div>
-              )}
+              </div>
+
+              {/* Status */}
+              <div className="space-y-1.5 pt-1">
+                <label htmlFor="theater-status" className="text-xs font-bold text-foreground">
+                  Trạng thái hoạt động
+                </label>
+                <Select
+                  value={formData.status}
+                  onValueChange={(val) => handleChange('status', val as AdminTheaterStatus)}
+                >
+                  <SelectTrigger id="theater-status" className="h-10 text-xs rounded-xl bg-card border-border/70">
+                    <SelectValue placeholder="Chọn trạng thái" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Đang hoạt động (Mở cửa bán vé bình thường)</SelectItem>
+                    <SelectItem value="maintenance">Đang bảo trì cơ sở vật chất (Tạm dừng suất)</SelectItem>
+                    <SelectItem value="inactive">Tạm ngưng vận hành (Đóng cửa tạm thời)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Cột phải: Live Preview Image 16:9 */}
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Image className="w-3.5 h-3.5 text-primary" />
+                <span>Xem trước hình ảnh cụm rạp (16:9)</span>
+              </h3>
+
+              <div className="w-full aspect-[16/9] rounded-2xl overflow-hidden border border-border/70 bg-secondary/30 shadow-sm relative flex items-center justify-center">
+                {formData.imageUrl && !imgFailed ? (
+                  <img
+                    src={formData.imageUrl}
+                    alt="Xem trước rạp"
+                    className="w-full h-full object-cover"
+                    onError={() => setImgFailed(true)}
+                  />
+                ) : (
+                  <div className="p-4 text-center space-y-1 text-muted-foreground">
+                    <ImageOff className="w-8 h-8 mx-auto opacity-50" />
+                    <p className="text-xs">
+                      {imgFailed ? 'Không thể tải ảnh xem trước' : 'Chưa có ảnh không gian rạp'}
+                    </p>
+                    <p className="text-[10px] opacity-75">Ảnh tỷ lệ 16:9 hiển thị trên trang cụm rạp</p>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

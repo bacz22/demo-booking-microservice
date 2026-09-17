@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowLeft, Building2, Film } from 'lucide-react'
 import { MovieInfo } from '@/components/movie/movie-info'
@@ -7,8 +7,14 @@ import { CinemaShowtimeCard } from '@/components/cinema/cinema-showtime-card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Movie } from '@/types/movie'
+import type { ShowtimeItem } from '@/types/showtime'
 import { movieApiService } from '@/services/movie-api.service'
-import { MOCK_CINEMAS } from '@/mocks/cinemas'
+import {
+  showtimeApiService,
+  isoToLocalTime,
+  mapBackendFormatToFrontend,
+  type BackendMovieShowtimeGroupResponse,
+} from '@/services/showtime-api.service'
 import { cn } from '@/lib/utils'
 
 /** Format Date sang YYYY-MM-DD */
@@ -30,6 +36,18 @@ export default function MovieDetailPage() {
   const [movie, setMovie] = useState<Movie | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
+  // 2. Quản lý trạng thái ngày chiếu & thành phố
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayString)
+  const [selectedCity, setSelectedCity] = useState<string>('Tất cả')
+
+  // 3. Suất chiếu thực tế từ Backend API
+  const [showtimeGroups, setShowtimeGroups] = useState<BackendMovieShowtimeGroupResponse[]>([])
+  const [isShowtimesLoading, setIsShowtimesLoading] = useState(false)
+
+  // 4. Trạng thái suất chiếu đang được chọn
+  const [selectedShowtimeId, setSelectedShowtimeId] = useState<string | undefined>()
+
+  // Tải thông tin chi tiết phim
   useEffect(() => {
     if (!movieId) {
       setIsLoading(false)
@@ -68,14 +86,39 @@ export default function MovieDetailPage() {
       })
   }, [movieId])
 
-  // 2. Quản lý trạng thái ngày chiếu được chọn (mặc định là hôm nay)
-  const [selectedDate, setSelectedDate] = useState<string>(getTodayString)
+  // Tải danh sách suất chiếu của phim theo ngày và khu vực
+  useEffect(() => {
+    if (!movieId) return
 
-  // 3. Bộ lọc khu vực / thành phố
-  const [selectedCity, setSelectedCity] = useState<string>('Tất cả')
+    let isCancelled = false
+    setIsShowtimesLoading(true)
 
-  // 4. Trạng thái suất chiếu đang được chọn (nếu có)
-  const [selectedShowtimeId, setSelectedShowtimeId] = useState<string | undefined>()
+    showtimeApiService
+      .getPublicShowtimesForMovie(movieId, {
+        date: selectedDate,
+        city: selectedCity !== 'Tất cả' ? selectedCity : undefined,
+      })
+      .then((groups) => {
+        if (!isCancelled) {
+          setShowtimeGroups(groups || [])
+        }
+      })
+      .catch((err) => {
+        console.error('Lỗi khi tải lịch chiếu phim:', err)
+        if (!isCancelled) {
+          setShowtimeGroups([])
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) {
+          setIsShowtimesLoading(false)
+        }
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [movieId, selectedDate, selectedCity])
 
   // Cập nhật tiêu đề trang theo phim
   useEffect(() => {
@@ -84,18 +127,29 @@ export default function MovieDetailPage() {
     }
   }, [movie])
 
-  // Lọc rạp theo thành phố đã chọn
-  const filteredCinemas = useMemo(() => {
-    if (selectedCity === 'Tất cả') {
-      return MOCK_CINEMAS
-    }
-    return MOCK_CINEMAS.filter((c) => c.city === selectedCity)
-  }, [selectedCity])
-
   // Điều hướng sang trang chọn ghế khi click vào suất chiếu
-  const handleSelectShowtime = (showtime: { id: string }) => {
+  const handleSelectShowtime = (
+    showtime: ShowtimeItem,
+    cinemaName: string,
+    roomName?: string
+  ) => {
     setSelectedShowtimeId(showtime.id)
-    navigate(`/booking/${showtime.id}/seats`)
+    navigate(`/booking/${showtime.id}/seats`, {
+      state: {
+        movie: movie
+          ? {
+              id: movie.id,
+              title: movie.title,
+              posterUrl: movie.posterUrl,
+              duration: movie.duration,
+              ageRating: movie.ageRating,
+            }
+          : undefined,
+        cinemaName,
+        roomName: roomName || 'Phòng chiếu',
+        date: selectedDate,
+      },
+    })
   }
 
   if (isLoading) {
@@ -158,6 +212,9 @@ export default function MovieDetailPage() {
       <section aria-label="Thông tin chi tiết phim">
         <MovieInfo
           title={movie.title}
+          originalTitle={movie.originalTitle}
+          status={movie.status}
+          trailerUrl={movie.trailerUrl}
           posterUrl={movie.posterUrl}
           backdropUrl={movie.backdropUrl}
           overview={movie.overview}
@@ -231,26 +288,73 @@ export default function MovieDetailPage() {
           </div>
         </div>
 
-        {/* Danh sách các rạp chiếu phim */}
-        {filteredCinemas.length > 0 ? (
-          <div className="space-y-4 sm:space-y-6">
-            {filteredCinemas.map((cinema) => (
-              <CinemaShowtimeCard
-                key={cinema.id}
-                cinemaName={cinema.name}
-                cinemaAddress={cinema.address}
-                distance={cinema.distance}
-                showtimes={cinema.showtimes}
-                selectedShowtimeId={selectedShowtimeId}
-                onSelectShowtime={handleSelectShowtime}
-              />
+        {/* Danh sách các rạp chiếu phim & Suất chiếu */}
+        {isShowtimesLoading ? (
+          <div className="space-y-4 sm:space-y-6 animate-pulse">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <div key={i} className="rounded-2xl border border-border/60 bg-card/60 p-6 space-y-4">
+                <div className="h-6 w-48 bg-muted rounded-lg" />
+                <div className="h-4 w-72 bg-muted/60 rounded" />
+                <div className="flex gap-3 pt-2">
+                  <div className="h-9 w-24 bg-muted rounded-xl" />
+                  <div className="h-9 w-24 bg-muted rounded-xl" />
+                  <div className="h-9 w-24 bg-muted rounded-xl" />
+                </div>
+              </div>
             ))}
+          </div>
+        ) : showtimeGroups.length > 0 &&
+          showtimeGroups.some(
+            (g) => g.showtimes && g.showtimes.some((s) => s.status === 'SELLING')
+          ) ? (
+          <div className="space-y-4 sm:space-y-6">
+            {showtimeGroups
+              .filter((g) => g.showtimes && g.showtimes.some((s) => s.status === 'SELLING'))
+              .map((group) => {
+                const mappedShowtimes: ShowtimeItem[] = (group.showtimes || [])
+                  .filter((st) => st.status === 'SELLING')
+                  .map((st) => ({
+                    id: st.id,
+                    movieId: movie?.id,
+                    cinemaId: group.theaterId,
+                    roomId: st.auditoriumId,
+                    roomName: st.auditoriumName,
+                    startTime: isoToLocalTime(st.startTime),
+                    endTime: isoToLocalTime(st.endTime),
+                    format: mapBackendFormatToFrontend(st.format),
+                    price: st.priceStandard,
+                  }))
+
+                const fullAddress = [
+                  group.address || group.theaterAddress,
+                  group.city || group.theaterCity,
+                ]
+                  .filter(Boolean)
+                  .join(', ') || 'Chưa cập nhật địa chỉ'
+
+                return (
+                  <CinemaShowtimeCard
+                    key={group.theaterId}
+                    cinemaName={group.theaterName}
+                    cinemaAddress={fullAddress}
+                    showtimes={mappedShowtimes}
+                    selectedShowtimeId={selectedShowtimeId}
+                    onSelectShowtime={(st) =>
+                      handleSelectShowtime(
+                        st,
+                        group.theaterName,
+                        (group.showtimes || []).find((s) => s.id === st.id)?.auditoriumName
+                      )
+                    }
+                  />
+                )
+              })}
           </div>
         ) : (
           <EmptyState
             icon={Building2}
-            title={`Không có rạp nào tại khu vực ${selectedCity}`}
-            description="Vui lòng thử chọn khu vực khác hoặc ngày chiếu khác."
+            title={`Chưa có suất chiếu mở bán tại ${selectedCity}`}
+            description="Hiện chưa có lịch chiếu phù hợp vào ngày này. Vui lòng chọn ngày chiếu hoặc khu vực khác."
             action={
               selectedCity !== 'Tất cả'
                 ? {

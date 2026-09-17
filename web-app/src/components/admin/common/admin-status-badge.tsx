@@ -173,7 +173,15 @@ export function AdminStatusBadge({
         }
 
       // Showtime Statuses
+      case 'scheduled':
+      case 'SCHEDULED':
+        return {
+          icon: Clock,
+          defaultLabel: 'Đã lên lịch',
+          className: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
+        }
       case 'selling':
+      case 'SELLING':
         return {
           icon: Sparkles,
           defaultLabel: 'Đang mở bán',
@@ -185,7 +193,15 @@ export function AdminStatusBadge({
           defaultLabel: 'Hết vé',
           className: 'bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30',
         }
+      case 'ended':
+      case 'ENDED':
+        return {
+          icon: Clock,
+          defaultLabel: 'Đã kết thúc',
+          className: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
+        }
       case 'cancelled':
+      case 'CANCELLED':
         return {
           icon: XCircle,
           defaultLabel: 'Đã hủy',

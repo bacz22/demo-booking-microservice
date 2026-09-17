@@ -79,7 +79,7 @@ function mapBackendMovieToAdminMovie(m: BackendMovieResponse): AdminMovie {
     rating: m.rating,
     director: m.director || '',
     cast: [],
-    status: (m.status?.toLowerCase() as AdminMovieStatus) || 'now-showing',
+    status: ((m.status ? m.status.trim().toLowerCase().replace('_', '-') : 'now-showing') as AdminMovieStatus) || 'now-showing',
     genres: m.genres || [],
     showtimeCount: 0,
     updatedAt: m.createdAt || new Date().toISOString(),
@@ -144,10 +144,10 @@ export const movieApiService = {
 
       return {
         items,
-        total: page.totalElements,
-        page: page.number + 1,
-        pageSize: page.size,
-        totalPages: page.totalPages,
+        total: page.totalElements || 0,
+        page: (page.number ?? 0) + 1,
+        pageSize: page.size || pageSize,
+        totalPages: page.totalPages || 0,
       }
     } catch (error) {
       console.warn('[movieApiService] Không thể kết nối Backend API hoặc có lỗi xảy ra:', error)

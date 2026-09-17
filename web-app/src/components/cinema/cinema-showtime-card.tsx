@@ -99,6 +99,8 @@ export function CinemaShowtimeCard({
                       endTime={st.endTime}
                       format={st.format}
                       language={st.language}
+                      roomName={st.roomName}
+                      price={st.price}
                       remainingSeats={st.remainingSeats}
                       totalSeats={st.totalSeats}
                       selected={selectedShowtimeId === st.id}
@@ -123,6 +125,8 @@ export function CinemaShowtimeCard({
               endTime={st.endTime}
               format={st.format}
               language={st.language}
+              roomName={st.roomName}
+              price={st.price}
               remainingSeats={st.remainingSeats}
               totalSeats={st.totalSeats}
               selected={selectedShowtimeId === st.id}

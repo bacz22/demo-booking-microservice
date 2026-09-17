@@ -14,6 +14,36 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Theater Service (Port 8082)
+      '^/api/movies/[^/]+/showtimes': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/theaters': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/admin/theaters': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/auditoriums': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/admin/auditoriums': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/showtimes': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      '/api/admin/showtimes': {
+        target: 'http://localhost:8082',
+        changeOrigin: true,
+      },
+      // Movie Service (Port 8081 - fallback for /api/movies, /api/genres, /api/admin/movies, etc.)
       '/api': {
         target: 'http://localhost:8081',
         changeOrigin: true,
