@@ -3,8 +3,10 @@ import { cn } from '@/lib/utils'
 import type { SeatType, SeatStatus } from '@/types/seat'
 
 export interface SeatProps {
-  /** Mã số ghế (ví dụ "A1", "C12", "E1-E2") */
+  /** Mã số ghế duy nhất trong rạp (ví dụ "A1", "C12", "E1-E2") */
   seatNumber: string
+  /** Số thứ tự ghế trong hàng để hiển thị gọn gàng (ví dụ 1, 2, 3...) */
+  displayNumber?: number | string
   /** Loại ghế: standard | vip | couple (mặc định là standard) */
   type?: SeatType
   /** Trạng thái ghế: available | selected | held | sold | disabled */
@@ -34,6 +36,7 @@ const STATUS_LABELS: Record<SeatStatus, string> = {
 
 export function Seat({
   seatNumber,
+  displayNumber,
   type = 'standard',
   status = 'available',
   selected = false,
@@ -41,8 +44,9 @@ export function Seat({
   onSelect,
   className,
 }: SeatProps) {
-  // Trạng thái thực tế: ưu tiên prop selected
-  const effectiveStatus: SeatStatus = selected ? 'selected' : status
+  // Trạng thái thực tế: nếu ghế đã bán, đang giữ hoặc bảo trì thì không thể chọn
+  const isBlocked = status === 'sold' || status === 'held' || status === 'disabled'
+  const effectiveStatus: SeatStatus = isBlocked ? status : selected ? 'selected' : status
   const isClickable = effectiveStatus === 'available' || effectiveStatus === 'selected'
 
   const typeLabel = TYPE_LABELS[type] || 'Ghế Thường'
@@ -125,7 +129,7 @@ export function Seat({
             <Heart className="mb-0.5 h-2 w-2 fill-rose-500/40 text-rose-400" aria-hidden="true" />
           )}
           <span className="text-[10px] sm:text-[11px] font-semibold tracking-tight">
-            {seatNumber}
+            {displayNumber !== undefined ? displayNumber : seatNumber}
           </span>
         </div>
       )}

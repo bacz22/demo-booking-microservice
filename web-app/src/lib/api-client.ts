@@ -44,7 +44,13 @@ async function request<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = endpoint.startsWith('http') ? endpoint : `${BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`
+  let cleanEndpoint = endpoint
+  if (BASE_URL.endsWith('/api') && cleanEndpoint.startsWith('/api/')) {
+    cleanEndpoint = cleanEndpoint.slice(4)
+  }
+  const url = cleanEndpoint.startsWith('http')
+    ? cleanEndpoint
+    : `${BASE_URL}${cleanEndpoint.startsWith('/') ? cleanEndpoint : `/${cleanEndpoint}`}`
 
   const headers = new Headers(options.headers || {})
   if (!headers.has('X-Correlation-Id')) {

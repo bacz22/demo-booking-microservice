@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input'
 import { DatePicker } from '@/components/ui/date-picker'
 import { FormField } from '@/components/ui/form-field'
 import { Badge } from '@/components/ui/badge'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   MOCK_USER_PROFILE,
   MOCK_MEMBERSHIP_INFO,
@@ -70,6 +71,8 @@ export default function ProfilePage() {
 
   // 2. State cho các Form & Tương tác
   const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false)
+  const [redeemModalData, setRedeemModalData] = useState<RewardItem | null>(null)
   const [newPromoCode, setNewPromoCode] = useState('')
   const [isApplyingCode, setIsApplyingCode] = useState(false)
 
@@ -139,13 +142,12 @@ export default function ProfilePage() {
       toast.error(`Bạn cần thêm ${reward.pointsCost - membership.points} điểm để đổi phần quà này.`)
       return
     }
+    setRedeemModalData(reward)
+  }
 
-    const confirmed = window.confirm(
-      `Xác nhận dùng ${reward.pointsCost} CinePoints để đổi "${reward.title}"?`
-    )
-    if (!confirmed) return
-
-    // Trừ điểm và thêm vào lịch sử
+  const confirmRedeemReward = () => {
+    if (!redeemModalData) return
+    const reward = redeemModalData
     const newPoints = membership.points - reward.pointsCost
     setMembership((prev) => ({ ...prev, points: newPoints }))
 
@@ -249,11 +251,13 @@ export default function ProfilePage() {
 
   // Xử lý đăng xuất
   const handleLogout = () => {
-    const confirmed = window.confirm('Bạn có chắc chắn muốn đăng xuất khỏi tài khoản CineBook?')
-    if (confirmed) {
-      logout()
-      navigate('/login')
-    }
+    setLogoutDialogOpen(true)
+  }
+
+  const confirmLogout = () => {
+    setLogoutDialogOpen(false)
+    logout()
+    navigate('/login')
   }
 
   return (
@@ -866,6 +870,34 @@ export default function ProfilePage() {
           </div>
         </div>
       )}
+
+      {/* Modal xác nhận Đăng xuất */}
+      <ConfirmDialog
+        isOpen={logoutDialogOpen}
+        title="Đăng xuất khỏi tài khoản?"
+        description="Bạn có chắc chắn muốn đăng xuất khỏi tài khoản CineBook không? Phiên làm việc hiện tại sẽ kết thúc."
+        confirmText="Đăng xuất"
+        cancelText="Ở lại"
+        variant="destructive"
+        onConfirm={confirmLogout}
+        onCancel={() => setLogoutDialogOpen(false)}
+      />
+
+      {/* Modal xác nhận Đổi quà */}
+      <ConfirmDialog
+        isOpen={Boolean(redeemModalData)}
+        title="Xác nhận đổi quà thưởng"
+        description={
+          redeemModalData
+            ? `Bạn có chắc chắn muốn dùng ${redeemModalData.pointsCost} CinePoints để đổi "${redeemModalData.title}" không?`
+            : ''
+        }
+        confirmText="Đổi quà ngay"
+        cancelText="Hủy"
+        variant="info"
+        onConfirm={confirmRedeemReward}
+        onCancel={() => setRedeemModalData(null)}
+      />
     </div>
   )
 }

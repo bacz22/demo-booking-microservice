@@ -1,0 +1,7 @@
+booking:
+  expiration:
+    enabled: false
+
+spring:
+  flyway:
+    clean-disabled: false

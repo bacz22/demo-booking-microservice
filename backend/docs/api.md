@@ -7,7 +7,7 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 ## Danh Mục Dịch Vụ
 1. [Movie Service (`:8081`)](#1-movie-service-port-8081)
 2. [Theater Service (`:8082`)](#2-theater-service-port-8082)
-3. [Booking Service (`:8083` - Roadmap)](#3-booking-service-port-8083---roadmap)
+3. [Booking Service (`:8083`)](#3-booking-service-port-8083)
 4. [Payment Service (`:8084` - Roadmap)](#4-payment-service-port-8084---roadmap)
 
 ---
@@ -173,11 +173,35 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 
 ---
 
-## 3. Booking Service (Port 8083 - Roadmap)
-- Quản lý State Machine vé: `PENDING_PAYMENT` $\rightarrow$ `CONFIRMED` / `CANCELLED`
-- Giữ ghế tạm thời bằng Redis TTL (Seat Hold Lock)
-- Tích hợp Saga thanh toán và hoàn vé
-- Tích hợp trực tiếp các endpoints `GET /api/showtimes/{id}` và `GET /api/showtimes/{id}/seats` từ `theater-service`.
+## 3. Booking Service (Port 8083)
+
+### Headers và quy ước
+- `X-User-Id`: UUID bắt buộc trên các API booking của người dùng.
+- `Idempotency-Key`: UUID bắt buộc khi tạo hold; gửi lại cùng payload sẽ trả về booking cũ.
+- `X-Correlation-Id`: tùy chọn; booking-service tự sinh và forward sang theater-service nếu thiếu.
+- State machine: `PENDING_PAYMENT` → `CONFIRMED` / `CANCELLED` / `EXPIRED`.
+
+### Public APIs
+| Phương thức | Đường dẫn | Mô tả |
+| :--- | :--- | :--- |
+| `GET` | `/api/bookings/showtimes/{showtimeId}/seats` | Seat map realtime; hỗ trợ `AVAILABLE`, `HELD_BY_ME`, `HELD`, `SOLD`. |
+| `POST` | `/api/bookings/hold` | Giữ 1–8 ghế, kiểm tra suất chiếu và snapshot giá; trả `201 Created`, replay cùng payload trả `200 OK`. |
+| `GET` | `/api/bookings/{id}` | Xem booking của user hiện tại. |
+| `GET` | `/api/bookings/me?page=0&pageSize=20` | Danh sách booking của user hiện tại. |
+| `POST` | `/api/bookings/{id}/confirm` | Xác nhận mock payment khi `BOOKING_MOCK_PAYMENT_ENABLED=true`. |
+| `POST` | `/api/bookings/{id}/cancel` | Hủy booking đang `PENDING_PAYMENT` và release ghế. |
+
+Mẫu request giữ ghế:
+```json
+{
+  "showtimeId": "11111111-1111-1111-1111-111111111111",
+  "seatIds": [
+    "22222222-2222-2222-2222-222222222222"
+  ]
+}
+```
+
+Booking-service dùng Redis Lua để lock ghế nguyên tử và PostgreSQL partial unique index để chặn double-booking ở tầng cuối. Hết TTL, booking được coi là không còn hiệu lực ngay trên read/write path; scheduler chỉ làm housekeeping.
 
 ---
 

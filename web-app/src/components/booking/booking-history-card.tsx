@@ -58,6 +58,11 @@ const STATUS_CONFIG: Record<BookingStatus, StatusConfig> = {
     className: 'bg-warning/15 text-warning border-warning/30',
     icon: Clock,
   },
+  PENDING_PAYMENT: {
+    label: 'Chờ thanh toán',
+    className: 'bg-warning/15 text-warning border-warning/30',
+    icon: Clock,
+  },
   CANCELLED: {
     label: 'Đã hủy',
     className: 'bg-muted text-muted-foreground border-border/50',

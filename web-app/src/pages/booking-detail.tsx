@@ -1,5 +1,5 @@
-import { useMemo, useEffect } from 'react'
-import { useParams, useLocation, Link } from 'react-router-dom'
+import { useState, useMemo, useEffect } from 'react'
+import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft,
   Printer,
@@ -11,26 +11,29 @@ import {
   CheckCircle2,
   AlertCircle,
   XCircle,
-  Navigation,
-  Info,
   Building2,
   CreditCard,
-  User,
-  Mail,
   Phone,
-  ShieldCheck,
+  AlertTriangle,
 } from 'lucide-react'
 import { QrCodeDisplay } from '@/components/booking/qr-code-display'
 import { AgeRatingBadge } from '@/components/movie/age-rating-badge'
 import { CopyButton } from '@/components/ui/copy-button'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { MOCK_BOOKINGS, type MockBookingRecord } from '@/mocks/bookings'
 import { MOCK_CINEMAS } from '@/mocks/cinemas'
 import { formatPrice } from '@/lib/utils'
 import { toast } from '@/lib/toast'
-import type { BookingStatus } from '@/types/booking'
+import type { BookingStatus, BookingHistoryItem } from '@/types/booking'
+import { bookingApiService } from '@/services/booking-api.service'
+import { movieApiService } from '@/services/movie-api.service'
+import { theaterApiService } from '@/services/theater-api.service'
 import { cn } from '@/lib/utils'
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface StatusInfo {
   label: string
@@ -50,7 +53,14 @@ const STATUS_CONFIG: Record<BookingStatus, StatusInfo> = {
   },
   PENDING: {
     label: 'Chờ thanh toán',
-    sublabel: 'Vui lòng hoàn tất thanh toán',
+    sublabel: 'Vui lòng hoàn tất thanh toán trước khi hết hạn giữ chỗ',
+    className: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
+    badgeVariant: 'secondary',
+    icon: Clock,
+  },
+  PENDING_PAYMENT: {
+    label: 'Chờ thanh toán',
+    sublabel: 'Vui lòng hoàn tất thanh toán trước khi hết hạn giữ chỗ',
     className: 'bg-amber-500/15 text-amber-400 border-amber-500/30',
     badgeVariant: 'secondary',
     icon: Clock,
@@ -64,7 +74,7 @@ const STATUS_CONFIG: Record<BookingStatus, StatusInfo> = {
   },
   EXPIRED: {
     label: 'Đã hết hạn',
-    sublabel: 'Suất chiếu đã kết thúc',
+    sublabel: 'Thời gian giữ chỗ đã hết hạn',
     className: 'bg-muted/30 text-muted-foreground border-border/50',
     badgeVariant: 'outline',
     icon: AlertCircle,
@@ -81,10 +91,84 @@ const STATUS_CONFIG: Record<BookingStatus, StatusInfo> = {
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>()
   const location = useLocation()
+  const navigate = useNavigate()
 
-  // 1. Tìm hoặc tổng hợp dữ liệu đơn vé
-  const booking = useMemo<MockBookingRecord>(() => {
-    // Ưu tiên dữ liệu từ location.state nếu có
+  const [liveBooking, setLiveBooking] = useState<BookingHistoryItem | null>(null)
+  const [isLoading, setIsLoading] = useState<boolean>(Boolean(bookingId && UUID_REGEX.test(bookingId)))
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false)
+
+  // 1. Tải dữ liệu booking thực tế từ Booking Service API nếu bookingId là UUID
+  useEffect(() => {
+    if (!bookingId || !UUID_REGEX.test(bookingId)) {
+      setIsLoading(false)
+      return
+    }
+
+    let isCancelled = false
+    setIsLoading(true)
+
+    bookingApiService
+      .getBookingById(bookingId)
+      .then(async (b) => {
+        if (isCancelled) return
+
+        let movieTitle = 'Phim rạp CineBook'
+        let poster = 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80'
+        let cinema = 'CineBook Cinema'
+        let room = 'Phòng chiếu tiêu chuẩn'
+
+        if (b.movieId) {
+          try {
+            const mv = await movieApiService.getMovieById(b.movieId)
+            if (mv) {
+              movieTitle = mv.title
+              poster = mv.posterUrl || poster
+            }
+          } catch {
+            // fallback
+          }
+        }
+
+        if (b.theaterId) {
+          try {
+            const th = await theaterApiService.getPublicTheaterById(b.theaterId)
+            if (th) cinema = th.name
+          } catch {
+            // fallback
+          }
+        }
+
+        const item = bookingApiService.mapBackendBookingToHistoryItem(b, {
+          movieTitle,
+          poster,
+          cinema,
+          room,
+          showtime: new Date(b.createdAt).toLocaleDateString('vi-VN', {
+            hour: '2-digit',
+            minute: '2-digit',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+          }),
+        })
+
+        setLiveBooking(item)
+      })
+      .catch((err) => {
+        console.warn('Không thể nạp chi tiết đơn đặt vé từ backend:', err)
+      })
+      .finally(() => {
+        if (!isCancelled) setIsLoading(false)
+      })
+
+    return () => {
+      isCancelled = true
+    }
+  }, [bookingId])
+
+  // 2. Tìm hoặc tổng hợp dữ liệu đơn vé fallback
+  const fallbackBooking = useMemo<MockBookingRecord>(() => {
     const stateData = location.state?.booking
     if (stateData) return stateData
 
@@ -96,7 +180,6 @@ export default function BookingDetailPage() {
       if (found) return found
     }
 
-    // Fallback chân thực nếu truy cập trực tiếp bằng mã bất kỳ
     return {
       id: 'b-fallback',
       bookingCode: bookingId || 'CB-849201',
@@ -114,6 +197,8 @@ export default function BookingDetailPage() {
     }
   }, [bookingId, location.state])
 
+  const booking = liveBooking || fallbackBooking
+
   // Cập nhật tiêu đề trang
   useEffect(() => {
     document.title = `Vé điện tử ${booking.bookingCode} - ${booking.movieTitle} | CineBook`
@@ -122,9 +207,10 @@ export default function BookingDetailPage() {
 
   // Tìm thông tin chi tiết cụm rạp để lấy địa chỉ và hotline
   const cinemaInfo = useMemo(() => {
-    const found = MOCK_CINEMAS.find((c) =>
-      booking.cinema.toLowerCase().includes(c.name.toLowerCase()) ||
-      c.name.toLowerCase().includes(booking.cinema.toLowerCase())
+    const found = MOCK_CINEMAS.find(
+      (c) =>
+        booking.cinema.toLowerCase().includes(c.name.toLowerCase()) ||
+        c.name.toLowerCase().includes(booking.cinema.toLowerCase())
     )
     return found || MOCK_CINEMAS[0]
   }, [booking.cinema])
@@ -132,7 +218,7 @@ export default function BookingDetailPage() {
   const statusMeta = STATUS_CONFIG[booking.status] || STATUS_CONFIG.CONFIRMED
   const StatusIcon = statusMeta.icon
 
-  // Trích xuất giờ và ngày từ chuỗi showtime (ví dụ: "19:30 • 20/09/2026")
+  // Trích xuất giờ và ngày từ chuỗi showtime
   const [showTimeHour, showTimeDate] = useMemo(() => {
     if (booking.showtime.includes('•')) {
       const parts = booking.showtime.split('•').map((s) => s.trim())
@@ -141,13 +227,12 @@ export default function BookingDetailPage() {
     return [booking.showtime, '20/09/2026']
   }, [booking.showtime])
 
-  // Tải file sự kiện lịch (.ics) hoặc mở Google Calendar
+  // Tải file sự kiện lịch hoặc mở Google Calendar
   const handleAddToCalendar = () => {
     const title = `Xem phim: ${booking.movieTitle} - CineBook`
     const desc = `Vé xem phim tại ${booking.cinema}, ${booking.room || 'Phòng chiếu'}. Ghế: ${booking.seats.join(', ')}. Mã vé: ${booking.bookingCode}`
     const locationStr = `${booking.cinema}, ${cinemaInfo.address}`
 
-    // Mở Google Calendar event creator
     const gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
       title
     )}&details=${encodeURIComponent(desc)}&location=${encodeURIComponent(locationStr)}`
@@ -159,36 +244,88 @@ export default function BookingDetailPage() {
   // Chia sẻ vé điện tử
   const handleShareTicket = async () => {
     const shareData = {
-      title: `Vé điện tử CineBook - ${booking.movieTitle}`,
-      text: `Vé xem phim ${booking.movieTitle} tại ${booking.cinema}. Suất: ${booking.showtime}. Ghế: ${booking.seats.join(', ')}. Mã vé: ${booking.bookingCode}`,
+      title: `Vé xem phim: ${booking.movieTitle}`,
+      text: `Tôi đã đặt vé xem phim ${booking.movieTitle} tại ${booking.cinema} vào lúc ${booking.showtime}. Ghế: ${booking.seats.join(', ')}!`,
       url: window.location.href,
     }
 
-    if (navigator.share) {
+    if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
       try {
         await navigator.share(shareData)
-        return
+        toast.success('Đã mở hộp thoại chia sẻ!')
       } catch {
-        // User cancelled or share failed, fallback to copy
+        // người dùng hủy chia sẻ
+      }
+    } else {
+      try {
+        await navigator.clipboard.writeText(
+          `${shareData.text}\nXem chi tiết tại: ${shareData.url}`
+        )
+        toast.success('Đã sao chép liên kết vé vào bộ nhớ tạm!')
+      } catch {
+        toast.error('Không thể chia sẻ hoặc sao chép liên kết.')
       }
     }
-
-    // Fallback: sao chép liên kết vé vào clipboard
-    navigator.clipboard.writeText(window.location.href)
-    toast.success('Đã sao chép liên kết vé vào bộ nhớ tạm!')
   }
 
-  // In vé / Tải PDF
+  // In vé hoặc lưu PDF
   const handlePrint = () => {
     window.print()
   }
 
+  // Mở modal xác nhận hủy đơn giữ chỗ
+  const handleRequestCancel = () => {
+    if (!booking.id || !UUID_REGEX.test(booking.id)) {
+      toast.error('Không thể hủy đơn vé này.')
+      return
+    }
+    setIsCancelDialogOpen(true)
+  }
+
+  // Thực hiện hủy đơn sau khi user đã xác nhận trong ConfirmDialog
+  const handleConfirmCancel = async () => {
+    if (!booking.id || !UUID_REGEX.test(booking.id)) return
+
+    setIsCancelling(true)
+    try {
+      const cancelled = await bookingApiService.cancelBooking(booking.id)
+      setLiveBooking((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: 'CANCELLED',
+              cancelledAt: cancelled.cancelledAt || new Date().toISOString(),
+            }
+          : null
+      )
+      toast.success('Đã hủy đơn giữ chỗ vé thành công.')
+      setIsCancelDialogOpen(false)
+    } catch (err: any) {
+      toast.error(err?.message || 'Không thể hủy đơn vé.')
+      setIsCancelDialogOpen(false)
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto space-y-6 pb-16 animate-pulse">
+        <Skeleton className="h-6 w-36 rounded-md" />
+        <Skeleton className="h-10 w-64 rounded-md" />
+        <Skeleton className="h-96 w-full rounded-3xl" />
+      </div>
+    )
+  }
+
+  const isPending = booking.status === 'PENDING' || booking.status === 'PENDING_PAYMENT'
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-16">
-      {/* 1. THANH ĐIỀU HƯỚNG & HÀNH ĐỘNG NHANH (ẨN KHI IN ẤN) */}
-      <div className="print:hidden space-y-4">
+      {/* 1. THANH ĐIỀU HƯỚNG & HÀNH ĐỘNG ĐẦU TRANG */}
+      <div className="space-y-3 print:hidden">
         {/* Breadcrumbs */}
-        <nav aria-label="Đường dẫn trang" className="flex items-center gap-2 text-xs text-muted-foreground">
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-xs text-muted-foreground">
           <Link to="/" className="hover:text-foreground transition-colors">
             Trang chủ
           </Link>
@@ -248,14 +385,57 @@ export default function BookingDetailPage() {
         </div>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 2. THẺ VÉ ĐIỆN TỬ CHÍNH (CINEMATIC BOARDING PASS / DIGITAL PASS)           */}
-      {/* ========================================================================= */}
+      {/* Thông báo nếu vé đang ở trạng thái giữ chỗ tạm thời (PENDING_PAYMENT) */}
+      {isPending && (
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 p-4 rounded-2xl border border-warning/50 bg-warning/10 text-warning animate-in fade-in">
+          <div className="flex items-center gap-2.5 text-xs sm:text-sm">
+            <AlertTriangle className="h-5 w-5 shrink-0" />
+            <span>
+              Đơn vé đang ở trạng thái <strong>Chờ thanh toán</strong> (được giữ trong 5 phút).
+            </span>
+          </div>
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isCancelling}
+              onClick={handleRequestCancel}
+              className="text-xs border-warning/40 hover:bg-warning/20 text-warning"
+            >
+              {isCancelling ? 'Đang hủy...' : 'Hủy đơn'}
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={() =>
+                navigate('/checkout', {
+                  state: {
+                    bookingId: booking.id,
+                    movieTitle: booking.movieTitle,
+                    cinemaName: booking.cinema,
+                    roomName: booking.room,
+                    showtime: booking.showtime,
+                    seats: booking.seats,
+                    total: booking.total,
+                  },
+                })
+              }
+              className="text-xs font-bold"
+            >
+              Tiếp tục thanh toán
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 2. THẺ VÉ ĐIỆN TỬ CHÍNH (CINEMATIC BOARDING PASS) */}
       <section
         aria-label="Vé điện tử xem phim"
         className="relative overflow-hidden rounded-3xl border border-border/70 bg-card text-card-foreground shadow-2xl backdrop-blur-md print:border print:shadow-none"
       >
-        {/* Lớp nền ảnh phim mờ ảo tạo chiều sâu điện ảnh */}
+        {/* Lớp nền ảnh phim mờ ảo */}
         <div className="absolute inset-0 z-0 opacity-15 pointer-events-none overflow-hidden">
           <img
             src={booking.poster}
@@ -268,9 +448,7 @@ export default function BookingDetailPage() {
 
         {/* NỘI DUNG VÉ: CHIA 2 PHẦN THEO ĐƯỜNG ĐỤC LỖ */}
         <div className="relative z-10 grid grid-cols-1 lg:grid-cols-12">
-          {/* =================================================================== */}
-          {/* PHẦN CHÍNH (8 CỘT): THÔNG TIN PHIM, SUẤT CHIẾU, GHẾ NGỒI             */}
-          {/* =================================================================== */}
+          {/* PHẦN CHÍNH (8 CỘT) */}
           <div className="lg:col-span-8 p-6 sm:p-8 space-y-6 flex flex-col justify-between">
             {/* Header thẻ vé: Huy hiệu trạng thái & Mã vé */}
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -284,125 +462,99 @@ export default function BookingDetailPage() {
                   <StatusIcon className="h-3.5 w-3.5" />
                   <span>{statusMeta.label}</span>
                 </div>
-                <span className="text-[11px] text-muted-foreground hidden sm:inline">
+                <span className="text-xs text-muted-foreground hidden sm:inline">
                   • {statusMeta.sublabel}
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Mã đặt vé:</span>
-                <span className="font-mono text-base font-black text-primary tracking-wider">
+              {/* Mã vé & Nút sao chép */}
+              <div className="flex items-center gap-2 rounded-xl bg-secondary/70 px-3 py-1.5 border border-border/50">
+                <span className="text-[11px] text-muted-foreground font-mono">MÃ VÉ:</span>
+                <span className="font-mono font-black text-sm text-foreground tracking-wider">
                   {booking.bookingCode}
                 </span>
-                <CopyButton text={booking.bookingCode} title="Sao chép mã đặt vé" />
+                <CopyButton text={booking.bookingCode} title="Sao chép mã vé" />
               </div>
             </div>
 
-            {/* Poster & Tên phim */}
-            <div className="flex flex-col sm:flex-row gap-5 items-start">
-              {/* Poster phim tỷ lệ 2:3 */}
-              <div className="relative h-44 w-32 shrink-0 overflow-hidden rounded-xl border border-border/60 bg-muted/40 shadow-md mx-auto sm:mx-0">
+            {/* Thông tin phim */}
+            <div className="flex gap-4 sm:gap-6 items-start">
+              <div className="relative shrink-0 rounded-2xl overflow-hidden border border-border/60 shadow-lg w-24 sm:w-28 aspect-[2/3] bg-muted">
                 <img
                   src={booking.poster}
-                  alt={`Poster ${booking.movieTitle}`}
+                  alt={booking.movieTitle}
                   className="h-full w-full object-cover"
                 />
-                <div className="absolute top-2 left-2 z-10">
-                  <AgeRatingBadge ageRating="T16" size="sm" />
-                </div>
               </div>
 
-              {/* Thông tin phim */}
-              <div className="space-y-2 text-center sm:text-left flex-1 min-w-0">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-1.5">
-                  <Badge variant="secondary" className="text-[10px] font-semibold">
-                    ScreenX 2D
+              <div className="space-y-2 flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <AgeRatingBadge ageRating="T16" />
+                  <Badge variant="outline" className="text-[11px] font-semibold border-border/60">
+                    2D Phụ Đề
                   </Badge>
-                  <Badge variant="outline" className="text-[10px]">
-                    Phụ đề Tiếng Việt
-                  </Badge>
-                  <span className="text-[11px] text-muted-foreground">166 phút</span>
                 </div>
 
-                <h1 className="text-xl sm:text-2xl font-black text-foreground tracking-tight leading-snug">
+                <h1 className="text-xl sm:text-2xl lg:text-3xl font-black text-foreground tracking-tight line-clamp-2">
                   {booking.movieTitle}
                 </h1>
 
-                <p className="text-xs text-muted-foreground flex items-center justify-center sm:justify-start gap-1.5 pt-1">
-                  <Building2 className="h-3.5 w-3.5 text-primary shrink-0" />
-                  <span className="font-semibold text-foreground">{booking.cinema}</span>
+                <p className="text-xs sm:text-sm font-semibold text-primary">
+                  {booking.cinema}
                 </p>
-
-                {booking.room && (
-                  <p className="text-xs text-muted-foreground font-medium">
-                    {booking.room}
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  {booking.room || 'Phòng chiếu tiêu chuẩn'}
+                </p>
               </div>
             </div>
 
-            {/* Khối Suất chiếu & Ghế ngồi (Card nổi bật) */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 rounded-2xl border border-border/60 bg-secondary/35 p-4 sm:p-5 backdrop-blur-xs">
-              {/* Giờ chiếu */}
-              <div className="space-y-1">
-                <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+            {/* Khối Thông tin Suất Chiếu & Ghế Ngồi */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 rounded-2xl bg-secondary/40 border border-border/50 backdrop-blur-xs">
+              <div>
+                <span className="text-[11px] text-muted-foreground block font-medium flex items-center gap-1">
                   <Clock className="h-3 w-3 text-primary" />
                   <span>Giờ chiếu</span>
                 </span>
-                <p className="text-xl sm:text-2xl font-black text-primary tracking-tight">
+                <strong className="text-sm sm:text-base font-black text-foreground">
                   {showTimeHour}
-                </p>
+                </strong>
               </div>
 
-              {/* Ngày chiếu */}
-              <div className="space-y-1">
-                <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+              <div>
+                <span className="text-[11px] text-muted-foreground block font-medium flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-primary" />
                   <span>Ngày chiếu</span>
                 </span>
-                <p className="text-sm sm:text-base font-bold text-foreground">
+                <strong className="text-sm sm:text-base font-black text-foreground">
                   {showTimeDate}
-                </p>
+                </strong>
               </div>
 
-              {/* Ghế ngồi đã đặt */}
-              <div className="space-y-1 col-span-2 sm:col-span-1">
-                <span className="text-[11px] font-medium text-muted-foreground flex items-center gap-1">
+              <div>
+                <span className="text-[11px] text-muted-foreground block font-medium flex items-center gap-1">
                   <Armchair className="h-3 w-3 text-primary" />
-                  <span>Ghế ngồi ({booking.seats.length} vé)</span>
+                  <span>Ghế ngồi</span>
                 </span>
-                <div className="flex flex-wrap gap-1.5 pt-0.5">
-                  {booking.seats.map((seat) => (
-                    <span
-                      key={seat}
-                      className="inline-flex items-center rounded-md border border-primary/40 bg-primary/20 px-2 py-0.5 font-mono text-xs sm:text-sm font-black text-primary shadow-xs"
-                    >
-                      {seat}
-                    </span>
-                  ))}
-                </div>
+                <strong className="text-sm sm:text-base font-black text-primary">
+                  {booking.seats.join(', ')}
+                </strong>
               </div>
-            </div>
 
-            {/* Nhắc nhở check-in trước giờ chiếu */}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground border-t border-border/30 pt-3">
-              <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
-              <span>
-                Vui lòng có mặt tại rạp trước giờ chiếu ít nhất <strong>15 phút</strong> để hoàn tất soát vé.
-              </span>
+              <div>
+                <span className="text-[11px] text-muted-foreground block font-medium flex items-center gap-1">
+                  <Building2 className="h-3 w-3 text-primary" />
+                  <span>Phòng chiếu</span>
+                </span>
+                <strong className="text-sm sm:text-base font-black text-foreground truncate block">
+                  {booking.room ? booking.room.replace('Phòng chiếu ', 'Phòng ') : 'P.02'}
+                </strong>
+              </div>
             </div>
           </div>
 
-          {/* =================================================================== */}
-          {/* ĐƯỜNG ĐỤC LỖ & NOTCHES (Tear-off perforated line)                     */}
-          {/* =================================================================== */}
-          <div className="relative flex items-center justify-center lg:col-span-4 border-t lg:border-t-0 lg:border-l border-dashed border-border/80 bg-secondary/20 p-6 sm:p-8 flex-col text-center space-y-4">
-            {/* Semicircular notches ở mép giao cắt */}
-            <div className="absolute -top-3 lg:-top-3 lg:-left-3.5 h-7 w-7 rounded-full bg-background border border-border/80 z-20 pointer-events-none" />
-            <div className="absolute -bottom-3 lg:-bottom-3 lg:-left-3.5 h-7 w-7 rounded-full bg-background border border-border/80 z-20 pointer-events-none" />
-
-            {/* Tiêu đề stub */}
-            <div className="space-y-1">
+          {/* PHẦN CUỐNG VÉ (4 CỘT): MÃ QR SOÁT VÉ */}
+          <div className="lg:col-span-4 p-6 sm:p-8 flex flex-col items-center justify-center gap-5 border-t lg:border-t-0 lg:border-l border-dashed border-border/80 bg-secondary/20 relative">
+            <div className="space-y-1 text-center">
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
                 Cổng Soát Vé Điện Tử
               </span>
@@ -411,7 +563,6 @@ export default function BookingDetailPage() {
               </h2>
             </div>
 
-            {/* SVG QR CODE & BARCODE COMPONENT */}
             <QrCodeDisplay
               value={booking.bookingCode}
               size={170}
@@ -419,7 +570,6 @@ export default function BookingDetailPage() {
               caption="Chạm để phóng to mã QR"
             />
 
-            {/* Thông báo quét trực tiếp tại rạp */}
             <div className="rounded-xl border border-border/40 bg-card/60 p-3 text-[11px] text-muted-foreground text-center space-y-1">
               <p className="font-semibold text-foreground">Không cần in vé giấy</p>
               <p>Nhân viên sẽ quét trực tiếp mã QR trên điện thoại của bạn tại cửa phòng chiếu.</p>
@@ -428,13 +578,10 @@ export default function BookingDetailPage() {
         </div>
       </section>
 
-      {/* ========================================================================= */}
-      {/* 3. BẢNG THÔNG TIN CHI TIẾT & HỖ TRỢ (2 CỘT)                               */}
-      {/* ========================================================================= */}
+      {/* 3. BẢNG THÔNG TIN CHI TIẾT & HỖ TRỢ (2 CỘT) */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-6 print:hidden">
-        {/* CỘT TRÁI (7 Cột): Chi tiết thanh toán & Người đặt vé */}
+        {/* CỘT TRÁI: Chi tiết thanh toán & Khách hàng */}
         <div className="md:col-span-7 space-y-6">
-          {/* Khối Chi tiết thanh toán */}
           <div className="rounded-2xl border border-border/60 bg-card/80 p-5 sm:p-6 shadow-sm backdrop-blur-md space-y-4">
             <h3 className="text-base font-bold text-foreground flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-primary" />
@@ -452,7 +599,10 @@ export default function BookingDetailPage() {
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Ghế ({booking.seats.join(', ')})</span>
                 <span className="font-medium text-foreground">
-                  {booking.seats.length} x {formatPrice(Math.round(booking.total / booking.seats.length))}
+                  {booking.seats.length} x{' '}
+                  {formatPrice(
+                    booking.seats.length > 0 ? Math.round(booking.total / booking.seats.length) : booking.total
+                  )}
                 </span>
               </div>
 
@@ -469,63 +619,32 @@ export default function BookingDetailPage() {
               </div>
             </div>
 
-            {/* Thông tin phương thức & thời gian */}
             <div className="rounded-xl bg-secondary/40 p-3 text-xs space-y-1.5 border border-border/40">
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Phương thức thanh toán:</span>
-                <strong className="text-foreground font-semibold">VNPAY-QR</strong>
+                <strong className="text-foreground font-semibold">VNPAY-QR / Mock</strong>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Thời gian giao dịch:</span>
-                <span className="text-foreground">{booking.createdAt || '14/09/2026 15:30'}</span>
+                <span className="text-foreground">{booking.createdAt || 'Hôm nay'}</span>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
-                <span>Trạng thái giao dịch:</span>
-                <span className="text-emerald-500 font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Thành công
+                <span>Trạng thái:</span>
+                <span
+                  className={cn(
+                    'font-semibold flex items-center gap-1',
+                    booking.status === 'CONFIRMED' ? 'text-emerald-500' : 'text-warning'
+                  )}
+                >
+                  <StatusIcon className="h-3 w-3" /> {statusMeta.label}
                 </span>
-              </div>
-            </div>
-          </div>
-
-          {/* Khối Thông tin người nhận vé */}
-          <div className="rounded-2xl border border-border/60 bg-card/80 p-5 sm:p-6 shadow-sm backdrop-blur-md space-y-4">
-            <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-              <User className="h-4 w-4 text-primary" />
-              <span>Thông Tin Khách Hàng Nhận Vé</span>
-            </h3>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs border-t border-border/40 pt-3">
-              <div className="flex items-start gap-2.5">
-                <User className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Họ và tên</span>
-                  <span className="font-semibold text-foreground">Nguyễn Văn An</span>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2.5">
-                <Phone className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Số điện thoại</span>
-                  <span className="font-semibold text-foreground">0912 345 678</span>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-2.5 sm:col-span-2">
-                <Mail className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <span className="text-muted-foreground block text-[11px]">Email nhận vé điện tử</span>
-                  <span className="font-semibold text-foreground">nguyenvanan.cine@gmail.com</span>
-                </div>
               </div>
             </div>
           </div>
         </div>
 
-        {/* CỘT PHẢI (5 Cột): Địa điểm rạp, Chỉ đường & Quy định */}
+        {/* CỘT PHẢI: Địa điểm rạp & Quy định */}
         <div className="md:col-span-5 space-y-6">
-          {/* Khối Địa chỉ rạp & Chỉ đường */}
           <div className="rounded-2xl border border-border/60 bg-card/80 p-5 sm:p-6 shadow-sm backdrop-blur-md space-y-4">
             <h3 className="text-base font-bold text-foreground flex items-center gap-2">
               <MapPin className="h-4 w-4 text-primary" />
@@ -541,71 +660,31 @@ export default function BookingDetailPage() {
               {cinemaInfo.hotline && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Phone className="h-3.5 w-3.5 text-primary" />
-                  <span>Hotline: <strong className="text-foreground">{cinemaInfo.hotline}</strong></span>
+                  <span>
+                    Hotline: <strong className="text-foreground">{cinemaInfo.hotline}</strong>
+                  </span>
                 </div>
               )}
-
-              {cinemaInfo.mapUrl && (
-                <Button
-                  asChild
-                  variant="outline"
-                  size="sm"
-                  className="w-full gap-2 text-xs border-border/60 hover:bg-secondary cursor-pointer mt-2"
-                >
-                  <a
-                    href={cinemaInfo.mapUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={`Mở Google Maps chỉ đường tới ${booking.cinema}`}
-                  >
-                    <Navigation className="h-3.5 w-3.5 text-primary" />
-                    <span>Mở Google Maps chỉ đường</span>
-                  </a>
-                </Button>
-              )}
-            </div>
-          </div>
-
-          {/* Khối Quy định & Hướng dẫn rạp */}
-          <div className="rounded-2xl border border-border/60 bg-card/80 p-5 sm:p-6 shadow-sm backdrop-blur-md space-y-4">
-            <h3 className="text-base font-bold text-foreground flex items-center gap-2">
-              <Info className="h-4 w-4 text-primary" />
-              <span>Quy Định Vào Phòng Chiếu</span>
-            </h3>
-
-            <ul className="space-y-2.5 text-xs text-muted-foreground border-t border-border/40 pt-3">
-              <li className="flex items-start gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <span>Xuất trình mã QR tại cửa soát vé để nhân viên quét mã vào rạp.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <span>
-                  Phim phân loại <strong>T16</strong>: Khán giả từ 16 tuổi trở lên, vui lòng mang theo giấy tờ tùy thân (CCCD) khi được yêu cầu.
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <span>Không mang thức ăn, đồ uống có mùi từ bên ngoài vào rạp.</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
-                <span>Vé đã mua không hỗ trợ hủy hoặc hoàn tiền.</span>
-              </li>
-            </ul>
-
-            <div className="pt-2 border-t border-border/30 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Cần hỗ trợ đổi vé?</span>
-              <a
-                href={`tel:${cinemaInfo.hotline || '19006017'}`}
-                className="font-bold text-primary hover:underline"
-              >
-                Gọi tổng đài hỗ trợ
-              </a>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Modal xác nhận Hủy vé */}
+      <ConfirmDialog
+        isOpen={isCancelDialogOpen}
+        title="Hủy đơn giữ chỗ vé xem phim?"
+        description="Bạn có chắc chắn muốn hủy đơn đặt vé này không? Sau khi hủy, ghế sẽ được giải phóng ngay lập tức cho những khán giả khác."
+        warningNote="Thao tác này không thể hoàn tác."
+        confirmText="Đồng ý hủy vé"
+        cancelText="Đóng"
+        variant="destructive"
+        isLoading={isCancelling}
+        onConfirm={handleConfirmCancel}
+        onCancel={() => {
+          if (!isCancelling) setIsCancelDialogOpen(false)
+        }}
+      />
     </div>
   )
 }

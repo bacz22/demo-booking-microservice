@@ -25,10 +25,20 @@ export interface AuthContextType {
   hasRole: (role: 'USER' | 'ADMIN') => boolean
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const DEMO_USER_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+
+function generateUserUuid(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  return 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+}
+
 const STORAGE_KEY = 'cinebook_user'
 
 const DEFAULT_DEMO_USER: AuthUser = {
-  id: 'usr-demo-01',
+  id: DEMO_USER_UUID,
   fullName: 'Nguyễn Văn An',
   email: 'demo@cinebook.vn',
   phone: '0912 345 678',
@@ -58,8 +68,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             ? parsed.roles
             : (isDemoEmail ? ['USER', 'ADMIN'] : ['USER'])
 
+          const validId = parsed.id && UUID_REGEX.test(parsed.id)
+            ? parsed.id
+            : (isDemoEmail ? DEMO_USER_UUID : generateUserUuid())
+
           return {
-            id: parsed.id || 'usr-default',
+            id: validId,
             fullName,
             email,
             phone: parsed.phone || '0912 345 678',
@@ -103,7 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const loggedUser: AuthUser = isDemo
         ? DEFAULT_DEMO_USER
         : {
-            id: `usr-${Date.now().toString().slice(-6)}`,
+            id: generateUserUuid(),
             fullName: data.email.split('@')[0] || 'Khách hàng CineBook',
             email: data.email.trim(),
             phone: '0912 345 678',
@@ -132,7 +146,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const newUser: AuthUser = {
-        id: `usr-${Date.now().toString().slice(-6)}`,
+        id: generateUserUuid(),
         fullName: data.fullName.trim(),
         email: data.email.trim(),
         phone: data.phone?.trim() || '',

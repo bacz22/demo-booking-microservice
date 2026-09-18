@@ -1,11 +1,16 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { Ticket, Film, Sparkles } from 'lucide-react'
+import { Ticket, Film, Sparkles, RefreshCw } from 'lucide-react'
 import { BookingHistoryCard } from '@/components/booking/booking-history-card'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
-import { MOCK_BOOKINGS, type BookingFilterCategory } from '@/mocks/bookings'
+import { bookingApiService } from '@/services/booking-api.service'
+import { movieApiService } from '@/services/movie-api.service'
+import { theaterApiService } from '@/services/theater-api.service'
+import type { BookingHistoryItem } from '@/types/booking'
 import { cn } from '@/lib/utils'
+
+export type BookingFilterCategory = 'all' | 'upcoming' | 'completed' | 'cancelled'
 
 interface FilterTabOption {
   id: BookingFilterCategory
@@ -16,50 +21,131 @@ const FILTER_TABS: FilterTabOption[] = [
   { id: 'all', label: 'Tất cả' },
   { id: 'upcoming', label: 'Sắp tới' },
   { id: 'completed', label: 'Đã xem' },
-  { id: 'cancelled', label: 'Đã hủy' },
+  { id: 'cancelled', label: 'Đã hủy / Hết hạn' },
 ]
 
 export default function MyBookingsPage() {
   const [activeFilter, setActiveFilter] = useState<BookingFilterCategory>('all')
-  const [isLoading, setIsLoading] = useState(false)
+  const [bookings, setBookings] = useState<BookingHistoryItem[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   // Cập nhật tiêu đề trang
   useEffect(() => {
     document.title = 'Vé của tôi | CineBook'
   }, [])
 
-  // Đếm số lượng vé trong từng tab
-  const counts = useMemo(() => {
-    return {
-      all: MOCK_BOOKINGS.length,
-      upcoming: MOCK_BOOKINGS.filter((b) => b.category === 'upcoming').length,
-      completed: MOCK_BOOKINGS.filter((b) => b.category === 'completed').length,
-      cancelled: MOCK_BOOKINGS.filter((b) => b.category === 'cancelled').length,
+  // Tải danh sách vé từ Booking Service API
+  const fetchMyBookings = useCallback(async () => {
+    try {
+      const res = await bookingApiService.getMyBookings(0, 50)
+      const rawList = res?.content || []
+
+      // Bộ nhớ cache tạm thời để tránh gọi lặp lại movie/theater
+      const movieCache = new Map<string, { title: string; posterUrl: string }>()
+      const theaterCache = new Map<string, string>()
+
+      const enrichedList: BookingHistoryItem[] = await Promise.all(
+        rawList.map(async (item) => {
+          let movieInfo = movieCache.get(item.movieId)
+          if (!movieInfo && item.movieId) {
+            try {
+              const mv = await movieApiService.getMovieById(item.movieId)
+              if (mv) {
+                movieInfo = { title: mv.title, posterUrl: mv.posterUrl || '' }
+                movieCache.set(item.movieId, movieInfo)
+              }
+            } catch {
+              // fallback
+            }
+          }
+
+          let theaterName = item.theaterId ? theaterCache.get(item.theaterId) : undefined
+          if (!theaterName && item.theaterId) {
+            try {
+              const th = await theaterApiService.getPublicTheaterById(item.theaterId)
+              if (th) {
+                theaterName = th.name
+                theaterCache.set(item.theaterId, theaterName)
+              }
+            } catch {
+              // fallback
+            }
+          }
+
+          return bookingApiService.mapBackendBookingToHistoryItem(item, {
+            movieTitle: movieInfo?.title || 'Phim rạp CineBook',
+            poster: movieInfo?.posterUrl || 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400',
+            cinema: theaterName || 'Rạp CineBook Cinema',
+            room: 'Phòng chiếu tiêu chuẩn',
+            showtime: new Date(item.createdAt).toLocaleDateString('vi-VN', {
+              hour: '2-digit',
+              minute: '2-digit',
+              day: '2-digit',
+              month: '2-digit',
+              year: 'numeric',
+            }),
+          })
+        })
+      )
+
+      setBookings(enrichedList)
+    } catch (err) {
+      console.error('Lỗi khi tải lịch sử vé:', err)
+    } finally {
+      setIsLoading(false)
+      setIsRefreshing(false)
     }
   }, [])
 
-  // Lọc danh sách theo filter đang chọn
-  const filteredBookings = useMemo(() => {
-    if (activeFilter === 'all') {
-      return MOCK_BOOKINGS
-    }
-    return MOCK_BOOKINGS.filter((b) => b.category === activeFilter)
-  }, [activeFilter])
+  useEffect(() => {
+    fetchMyBookings()
+  }, [fetchMyBookings])
 
-  // Giả lập hiệu ứng loading khi chuyển tab filter
+  const handleRefresh = () => {
+    setIsRefreshing(true)
+    fetchMyBookings()
+  }
+
+  // Phân loại danh sách vé vào các tab
+  const categorized = useMemo(() => {
+    const upcoming = bookings.filter(
+      (b) => b.status === 'CONFIRMED' || b.status === 'PENDING' || b.status === 'PENDING_PAYMENT'
+    )
+    const completed = bookings.filter((b) => b.status === 'CONFIRMED')
+    const cancelled = bookings.filter(
+      (b) => b.status === 'CANCELLED' || b.status === 'EXPIRED' || b.status === 'PAYMENT_FAILED'
+    )
+
+    return {
+      all: bookings,
+      upcoming,
+      completed,
+      cancelled,
+    }
+  }, [bookings])
+
+  // Đếm số lượng vé trong từng tab
+  const counts = useMemo(() => {
+    return {
+      all: categorized.all.length,
+      upcoming: categorized.upcoming.length,
+      completed: categorized.completed.length,
+      cancelled: categorized.cancelled.length,
+    }
+  }, [categorized])
+
+  // Lọc danh sách theo filter đang chọn
+  const filteredBookings = categorized[activeFilter] || bookings
+
   const handleFilterChange = (tabId: BookingFilterCategory) => {
-    if (tabId === activeFilter) return
-    setIsLoading(true)
     setActiveFilter(tabId)
-    setTimeout(() => {
-      setIsLoading(false)
-    }, 200)
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 pb-12">
       {/* 1. Header Trang */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-border/40 pb-6">
         <div className="space-y-1">
           <div className="flex items-center gap-2.5">
             <span className="h-6 w-1.5 rounded-full bg-primary" aria-hidden="true" />
@@ -72,15 +158,29 @@ export default function MyBookingsPage() {
           </p>
         </div>
 
-        <Button asChild variant="outline" size="sm" className="self-start sm:self-auto border-border/60">
-          <Link to="/movies">
-            <Film className="h-3.5 w-3.5 mr-1.5" />
-            <span>Khám phá phim mới</span>
-          </Link>
-        </Button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={isRefreshing || isLoading}
+            className="border-border/60 hover:bg-secondary cursor-pointer"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5 mr-1.5', isRefreshing && 'animate-spin')} />
+            <span>Làm mới</span>
+          </Button>
+
+          <Button asChild variant="primary" size="sm">
+            <Link to="/movies">
+              <Film className="h-3.5 w-3.5 mr-1.5" />
+              <span>Đặt vé mới</span>
+            </Link>
+          </Button>
+        </div>
       </div>
 
-      {/* 2. Thanh lọc Filter: Tất cả | Sắp tới | Đã xem | Đã hủy */}
+      {/* 2. Thanh lọc Filter: Tất cả | Sắp tới | Đã xem | Đã hủy / Hết hạn */}
       <div
         role="tablist"
         aria-label="Lọc lịch sử đặt vé"
@@ -123,7 +223,6 @@ export default function MyBookingsPage() {
 
       {/* 3. Danh sách vé đặt / Loading State / Empty State */}
       {isLoading ? (
-        // Hiệu ứng Loading Shimmer Skeletons
         <div className="space-y-4" aria-busy="true" aria-label="Đang tải danh sách vé">
           {[1, 2, 3].map((n) => (
             <div
@@ -146,11 +245,10 @@ export default function MyBookingsPage() {
           ))}
         </div>
       ) : filteredBookings.length > 0 ? (
-        // Danh sách các thẻ vé (Reuse BookingHistoryCard)
         <div className="space-y-4">
           {filteredBookings.map((booking) => (
             <BookingHistoryCard
-              key={booking.bookingCode}
+              key={booking.id || booking.bookingCode}
               bookingCode={booking.bookingCode}
               movieTitle={booking.movieTitle}
               poster={booking.poster}
@@ -160,17 +258,17 @@ export default function MyBookingsPage() {
               seats={booking.seats}
               total={booking.total}
               status={booking.status}
+              href={`/my-bookings/${booking.id || booking.bookingCode}`}
             />
           ))}
         </div>
       ) : (
-        // Trạng thái rỗng (Empty State)
         <EmptyState
           icon={Ticket}
           title="Không tìm thấy vé nào"
           description={`Bạn chưa có vé nào trong danh mục "${FILTER_TABS.find((t) => t.id === activeFilter)?.label}". Hãy chọn bộ phim yêu thích và đặt vé ngay hôm nay!`}
           action={{
-            label: 'Đặt vé xem phim ngay',
+            label: 'Khám phá phim đang chiếu',
             href: '/movies',
             icon: Sparkles,
           }}

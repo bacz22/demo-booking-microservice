@@ -27,6 +27,19 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: false
 
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      timeout: ${REDIS_TIMEOUT:2s}
+      repositories:
+        enabled: false
+      lettuce:
+        pool:
+          max-active: ${REDIS_POOL_MAX_ACTIVE:20}
+          max-idle: ${REDIS_POOL_MAX_IDLE:10}
+          min-idle: ${REDIS_POOL_MIN_IDLE:2}
+
   jackson:
     time-zone: UTC
 
@@ -48,5 +61,19 @@ logging:
     level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"
 
 booking:
+  hold-ttl-seconds: ${BOOKING_HOLD_TTL_SECONDS:300}
+  max-seats-per-booking: ${BOOKING_MAX_SEATS:8}
+  redis-required: ${BOOKING_REDIS_REQUIRED:true}
+  mock-payment-enabled: ${BOOKING_MOCK_PAYMENT_ENABLED:true}
+  idempotency:
+    mutex-ttl-seconds: ${BOOKING_IDEMPOTENCY_MUTEX_TTL_SECONDS:30}
+    fingerprint-ttl-seconds: ${BOOKING_IDEMPOTENCY_FINGERPRINT_TTL_SECONDS:600}
+  expiration:
+    enabled: ${BOOKING_EXPIRATION_ENABLED:true}
+    fixed-delay-ms: ${BOOKING_EXPIRATION_FIXED_DELAY_MS:30000}
+    batch-size: ${BOOKING_EXPIRATION_BATCH_SIZE:100}
   services:
-    theater-url: ${THEATER_SERVICE_URL:http://localhost:8082}
+    theater:
+      url: ${THEATER_SERVICE_URL:http://localhost:8082}
+      connect-timeout: ${THEATER_CONNECT_TIMEOUT:3s}
+      read-timeout: ${THEATER_READ_TIMEOUT:5s}

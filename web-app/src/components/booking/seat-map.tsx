@@ -213,8 +213,9 @@ export function SeatMap({
                     const isSelected = selectedSeats.includes(seat.seatNumber)
                     return (
                       <Seat
-                        key={seat.seatNumber}
+                        key={seat.id || `${row.rowLabel}-${seat.seatNumber}`}
                         seatNumber={seat.seatNumber}
+                        displayNumber={seat.number !== undefined ? seat.number : seat.seatNumber}
                         type={seat.type}
                         status={seat.status}
                         selected={isSelected}
@@ -239,8 +240,9 @@ export function SeatMap({
                     const isSelected = selectedSeats.includes(seat.seatNumber)
                     return (
                       <Seat
-                        key={seat.seatNumber}
+                        key={seat.id || `${row.rowLabel}-${seat.seatNumber}`}
                         seatNumber={seat.seatNumber}
+                        displayNumber={seat.number !== undefined ? seat.number : seat.seatNumber}
                         type={seat.type}
                         status={seat.status}
                         selected={isSelected}

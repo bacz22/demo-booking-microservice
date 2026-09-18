@@ -43,6 +43,11 @@ export default defineConfig({
         target: 'http://localhost:8082',
         changeOrigin: true,
       },
+      // Booking Service (Port 8083)
+      '/api/bookings': {
+        target: 'http://localhost:8083',
+        changeOrigin: true,
+      },
       // Movie Service (Port 8081 - fallback for /api/movies, /api/genres, /api/admin/movies, etc.)
       '/api': {
         target: 'http://localhost:8081',
@@ -51,6 +56,5 @@ export default defineConfig({
     },
   },
 })
-
 
 
