@@ -3,6 +3,7 @@ package com.cinebook.booking.client;
 import com.cinebook.booking.client.dto.TheaterSeatMapDto;
 import com.cinebook.booking.client.dto.TheaterShowtimeDto;
 import com.cinebook.booking.exception.TheaterServiceUnavailableException;
+import com.cinebook.booking.exception.ShowtimeNotFoundException;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.stereotype.Component;
@@ -28,7 +29,7 @@ public class TheaterServiceClient {
             return result;
         } catch (RestClientResponseException ex) {
             if (ex.getStatusCode().equals(HttpStatusCode.valueOf(404))) {
-                throw new TheaterServiceUnavailableException("Không tìm thấy suất chiếu");
+                throw new ShowtimeNotFoundException();
             }
             throw new TheaterServiceUnavailableException("Theater service trả về HTTP " + ex.getStatusCode().value());
         } catch (ResourceAccessException ex) {

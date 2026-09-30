@@ -61,6 +61,26 @@ services:
     networks:
       - cinebook
 
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: cinebook-postgres-payment
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: cinebook
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5436:5432"
+    volumes:
+      - postgres_payment_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebook -d payment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cinebook
+
   redis:
     image: redis:7.4-alpine
     container_name: cinebook-redis
@@ -155,6 +175,7 @@ volumes:
   postgres_movie_data:
   postgres_theater_data:
   postgres_booking_data:
+  postgres_payment_data:
   redis_data:
 
 networks:

@@ -46,6 +46,9 @@ public class Booking {
     @Column(name = "total_amount", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalAmount;
 
+    @Column(name = "payment_id", unique = true)
+    private UUID paymentId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
     private BookingStatus status;
@@ -94,7 +97,12 @@ public class Booking {
     }
 
     public void confirm(Instant now) {
+        confirm(null, now);
+    }
+
+    public void confirm(UUID paymentId, Instant now) {
         this.status = BookingStatus.CONFIRMED;
+        this.paymentId = paymentId;
         this.confirmedAt = now;
         this.updatedAt = now;
     }
@@ -121,6 +129,7 @@ public class Booking {
     public UUID getTheaterId() { return theaterId; }
     public UUID getAuditoriumId() { return auditoriumId; }
     public BigDecimal getTotalAmount() { return totalAmount; }
+    public UUID getPaymentId() { return paymentId; }
     public BookingStatus getStatus() { return status; }
     public Instant getExpiresAt() { return expiresAt; }
     public Instant getConfirmedAt() { return confirmedAt; }

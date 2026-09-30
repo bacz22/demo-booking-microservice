@@ -43,6 +43,13 @@ spring:
   jackson:
     time-zone: UTC
 
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
 server:
   port: ${SERVER_PORT:8083}
   shutdown: graceful
@@ -64,7 +71,11 @@ booking:
   hold-ttl-seconds: ${BOOKING_HOLD_TTL_SECONDS:300}
   max-seats-per-booking: ${BOOKING_MAX_SEATS:8}
   redis-required: ${BOOKING_REDIS_REQUIRED:true}
+  # Bật thanh toán giả lập để test toàn bộ luồng giữ ghế -> xác nhận booking.
+  # Có thể tắt lại bằng biến môi trường BOOKING_MOCK_PAYMENT_ENABLED=false.
   mock-payment-enabled: ${BOOKING_MOCK_PAYMENT_ENABLED:true}
+  internal:
+    service-key: ${BOOKING_SERVICE_KEY:local-dev-service-key}
   idempotency:
     mutex-ttl-seconds: ${BOOKING_IDEMPOTENCY_MUTEX_TTL_SECONDS:30}
     fingerprint-ttl-seconds: ${BOOKING_IDEMPOTENCY_FINGERPRINT_TTL_SECONDS:600}

@@ -8,6 +8,8 @@ import com.cinebook.booking.domain.enums.ConfirmOutcome;
 import com.cinebook.booking.exception.BookingAccessDeniedException;
 import com.cinebook.booking.exception.BookingNotFoundException;
 import com.cinebook.booking.exception.InvalidBookingStateException;
+import com.cinebook.booking.exception.PaymentAmountMismatchException;
+import com.cinebook.booking.exception.PaymentCurrencyMismatchException;
 import com.cinebook.booking.repository.BookingRepository;
 import com.cinebook.booking.repository.BookingSeatRepository;
 import org.springframework.data.domain.Page;
@@ -102,6 +104,52 @@ public class BookingPersistenceService {
         bookings.save(booking);
         seats.saveAllAndFlush(bookingSeats);
         return new TransitionResult(booking, seatIds, ConfirmOutcome.CONFIRMED);
+    }
+
+    @Transactional
+    public PaymentConfirmationResult confirmWithPayment(PaymentConfirmationCommand command) {
+        Booking booking = bookings.findByIdForUpdate(command.bookingId()).orElseThrow(BookingNotFoundException::new);
+        checkOwner(booking, command.userId());
+        if (booking.getStatus() == BookingStatus.CONFIRMED) {
+            PaymentConfirmationOutcome outcome = command.paymentId().equals(booking.getPaymentId())
+                ? PaymentConfirmationOutcome.ALREADY_CONFIRMED_SAME_PAYMENT
+                : PaymentConfirmationOutcome.ALREADY_CONFIRMED_OTHER_PAYMENT;
+            return new PaymentConfirmationResult(booking, List.of(), outcome);
+        }
+        if (booking.getStatus() == BookingStatus.EXPIRED) {
+            return new PaymentConfirmationResult(booking, List.of(), PaymentConfirmationOutcome.ALREADY_EXPIRED);
+        }
+        if (booking.getStatus() == BookingStatus.CANCELLED) {
+            return new PaymentConfirmationResult(booking, List.of(), PaymentConfirmationOutcome.CANCELLED);
+        }
+        if (booking.getStatus() != BookingStatus.PENDING_PAYMENT) {
+            throw new InvalidBookingStateException("Booking hiện ở trạng thái " + booking.getStatus());
+        }
+        if (!"VND".equalsIgnoreCase(command.currency())) throw new PaymentCurrencyMismatchException();
+        if (booking.getTotalAmount().compareTo(command.amount()) != 0) throw new PaymentAmountMismatchException();
+
+        Instant now = Instant.now(clock);
+        List<BookingSeat> bookingSeats = seats.findByBookingIdOrderBySeatNumber(command.bookingId());
+        List<UUID> seatIds = bookingSeats.stream().map(BookingSeat::getSeatId).toList();
+        if (!booking.getExpiresAt().isAfter(now)) {
+            booking.expire(now);
+            bookingSeats.forEach(s -> s.markReleased(now));
+            bookings.save(booking);
+            seats.saveAllAndFlush(bookingSeats);
+            return new PaymentConfirmationResult(booking, seatIds, PaymentConfirmationOutcome.NEWLY_EXPIRED);
+        }
+        booking.confirm(command.paymentId(), now);
+        bookingSeats.forEach(s -> s.markSold(now));
+        bookings.save(booking);
+        seats.saveAllAndFlush(bookingSeats);
+        return new PaymentConfirmationResult(booking, seatIds, PaymentConfirmationOutcome.NEWLY_CONFIRMED);
+    }
+
+    @Transactional(readOnly = true)
+    public BookingPaymentStatus paymentStatus(UUID bookingId, UUID userId) {
+        Booking booking = bookings.findById(bookingId).orElseThrow(BookingNotFoundException::new);
+        checkOwner(booking, userId);
+        return BookingPaymentStatus.from(booking);
     }
 
     @Transactional

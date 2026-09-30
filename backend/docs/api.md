@@ -8,7 +8,7 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 1. [Movie Service (`:8081`)](#1-movie-service-port-8081)
 2. [Theater Service (`:8082`)](#2-theater-service-port-8082)
 3. [Booking Service (`:8083`)](#3-booking-service-port-8083)
-4. [Payment Service (`:8084` - Roadmap)](#4-payment-service-port-8084---roadmap)
+4. [Payment Service (`:8084` - trước Kafka/Saga)](#4-payment-service-port-8084---trước-kafkasaga)
 
 ---
 
@@ -188,8 +188,19 @@ Tài liệu đặc tả các giao diện lập trình ứng dụng (API Contract
 | `POST` | `/api/bookings/hold` | Giữ 1–8 ghế, kiểm tra suất chiếu và snapshot giá; trả `201 Created`, replay cùng payload trả `200 OK`. |
 | `GET` | `/api/bookings/{id}` | Xem booking của user hiện tại. |
 | `GET` | `/api/bookings/me?page=0&pageSize=20` | Danh sách booking của user hiện tại. |
-| `POST` | `/api/bookings/{id}/confirm` | Xác nhận mock payment khi `BOOKING_MOCK_PAYMENT_ENABLED=true`. |
+| `POST` | `/api/bookings/{id}/confirm` | Xác nhận mock payment legacy khi `BOOKING_MOCK_PAYMENT_ENABLED=true`. |
 | `POST` | `/api/bookings/{id}/cancel` | Hủy booking đang `PENDING_PAYMENT` và release ghế. |
+
+### Internal APIs dùng bởi payment-service
+
+Các endpoint dưới đây bắt buộc `X-Service-Key: ${BOOKING_SERVICE_KEY}` và không expose cho client/browser.
+
+| Phương thức | Đường dẫn | Mô tả |
+| :--- | :--- | :--- |
+| `GET` | `/api/internal/bookings/{id}/payment-status?userId={userId}` | Đọc trạng thái, amount, currency hệ thống (`VND`) và payment hiện đã gắn. |
+| `POST` | `/api/internal/bookings/{id}/confirm-payment` | Confirm idempotent bằng `paymentId`, `amount`, `currency`; server re-check row dưới lock. |
+
+Header bổ sung cho confirm: `X-User-Id: <userId>`.
 
 Mẫu request giữ ghế:
 ```json
@@ -205,7 +216,36 @@ Booking-service dùng Redis Lua để lock ghế nguyên tử và PostgreSQL par
 
 ---
 
-## 4. Payment Service (Port 8084 - Roadmap)
-- Xử lý cổng thanh toán (VNPAY, MoMo, ZaloPay, VietQR)
-- Webhook nhận kết quả thanh toán bất đồng bộ
-- Phát sinh sự kiện Kafka thông báo thanh toán thành công
+## 4. Payment Service (Port 8084 - trước Kafka/Saga)
+
+Payment-service dùng PostgreSQL riêng tại `localhost:5436`, lưu payment và lịch sử `payment_attempts`. Giai đoạn này chỉ có mock provider; chưa thêm Kafka/Saga.
+
+### Public APIs
+
+| Phương thức | Đường dẫn | Mô tả |
+| :--- | :--- | :--- |
+| `POST` | `/api/payments` | Tạo payment từ booking đang `PENDING_PAYMENT`; bắt buộc `Idempotency-Key` là UUID. |
+| `GET` | `/api/payments/{id}` | Xem payment của user hiện tại. |
+| `GET` | `/api/payments/me?page=0&pageSize=20` | Danh sách payment của user hiện tại. |
+| `POST` | `/api/payments/{id}/complete` | Hoàn tất mock payment với `success=true/false`; retry cùng request là idempotent. |
+| `POST` | `/api/payments/{id}/retry` | Retry payment sau khi booking-service tạm thời unavailable. |
+
+Tạo payment:
+```json
+{
+  "bookingId": "11111111-1111-1111-1111-111111111111",
+  "amount": 250000.00,
+  "currency": "VND",
+  "method": "MOCK"
+}
+```
+
+Hoàn tất mock:
+```json
+{
+  "success": true,
+  "providerRef": "MOCK-001"
+}
+```
+
+Payment claim dùng một câu `UPDATE ... WHERE ... RETURNING` atomic. Mỗi lần claim tạo một `payment_attempts`; stale worker không thể resolve payment vì các câu update cuối đều kiểm tra `processing_token` (fencing token). Reconciliation job dùng ShedLock và vẫn claim lại bằng cùng cơ chế atomic.

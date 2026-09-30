@@ -1,4 +1,5 @@
 booking:
+  mock-payment-enabled: true
   expiration:
     enabled: false
 

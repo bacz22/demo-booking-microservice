@@ -1,0 +1,7 @@
+payment:
+  processing:
+    reconciliation-enabled: false
+
+spring:
+  flyway:
+    clean-disabled: false
