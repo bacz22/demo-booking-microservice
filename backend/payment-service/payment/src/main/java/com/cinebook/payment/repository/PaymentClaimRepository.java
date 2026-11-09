@@ -106,6 +106,44 @@ public class PaymentClaimRepository {
         return true;
     }
 
+    /**
+     * Chốt SUCCEEDED khi booking-service xác nhận qua Kafka. Không cần processing_token:
+     * chỉ cần payment vẫn đang PROCESSING (idempotent khi nhận lại event).
+     */
+    public boolean resolveSuccessFromBooking(UUID paymentId, String providerRef, Instant now) {
+        int updated = jdbc.update("""
+            UPDATE payments
+               SET status = 'SUCCEEDED', provider_ref = ?, paid_at = ?,
+                   processing_token = NULL, processing_started_at = NULL, updated_at = ?
+             WHERE id = ? AND status = 'PROCESSING'
+            """, providerRef, timestamp(now), timestamp(now), paymentId);
+        if (updated == 0) return false;
+        jdbc.update("""
+            UPDATE payment_attempts SET status = 'SUCCEEDED', provider_ref = ?, ended_at = ?
+             WHERE payment_id = ? AND status = 'PROCESSING'
+            """, providerRef, timestamp(now), paymentId);
+        return true;
+    }
+
+    /**
+     * Booking từ chối payment đã thu tiền → hoàn tiền (mock: hoàn ngay) và chuyển REFUNDED.
+     * Chỉ áp dụng khi payment còn PROCESSING (idempotent khi nhận lại event).
+     */
+    public boolean refundFromBooking(UUID paymentId, String code, String message, Instant now) {
+        int updated = jdbc.update("""
+            UPDATE payments
+               SET status = 'REFUNDED', failure_code = ?, failure_message = ?, failed_at = ?,
+                   processing_token = NULL, processing_started_at = NULL, updated_at = ?
+             WHERE id = ? AND status = 'PROCESSING'
+            """, code, message, timestamp(now), timestamp(now), paymentId);
+        if (updated == 0) return false;
+        jdbc.update("""
+            UPDATE payment_attempts SET status = 'FAILED', failure_code = ?, failure_message = ?, ended_at = ?
+             WHERE payment_id = ? AND status = 'PROCESSING'
+            """, code, message, timestamp(now), paymentId);
+        return true;
+    }
+
     public List<UUID> findStuckIds(Instant leaseExpiredBefore, int limit) {
         return jdbc.query("""
             SELECT id FROM payments

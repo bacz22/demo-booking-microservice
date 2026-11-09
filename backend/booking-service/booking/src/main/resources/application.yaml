@@ -45,10 +45,9 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    # Producer/consumer được cấu hình trong config/KafkaConfig (acks=all, idempotence, String serde).
+    consumer:
+      group-id: booking-service
 
 server:
   port: ${SERVER_PORT:8083}
@@ -66,6 +65,16 @@ management:
 logging:
   pattern:
     level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"
+
+app:
+  kafka:
+    topics:
+      payment-events: payment.events
+      booking-events: booking.events
+  outbox:
+    publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+    poll-delay-ms: ${OUTBOX_POLL_DELAY_MS:500}
+    batch-size: ${OUTBOX_BATCH_SIZE:100}
 
 booking:
   hold-ttl-seconds: ${BOOKING_HOLD_TTL_SECONDS:300}

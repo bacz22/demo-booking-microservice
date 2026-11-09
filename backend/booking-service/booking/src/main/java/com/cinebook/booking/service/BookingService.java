@@ -167,38 +167,6 @@ public class BookingService {
         return response(result.booking());
     }
 
-    public InternalPaymentResult confirmPaid(UUID id, UUID userId, UUID paymentId,
-                                             BigDecimal amount, String currency) {
-        Booking current = persistence.get(id, userId);
-        if (current.getStatus() == com.cinebook.booking.domain.enums.BookingStatus.CONFIRMED) {
-            if (paymentId.equals(current.getPaymentId())) {
-                return InternalPaymentResult.of(current, PaymentConfirmationOutcome.ALREADY_CONFIRMED_SAME_PAYMENT);
-            }
-            return InternalPaymentResult.of(current, PaymentConfirmationOutcome.ALREADY_CONFIRMED_OTHER_PAYMENT);
-        }
-        if (current.getStatus() == com.cinebook.booking.domain.enums.BookingStatus.EXPIRED) {
-            throw new BookingExpiredException();
-        }
-        if (current.getStatus() == com.cinebook.booking.domain.enums.BookingStatus.CANCELLED) {
-            throw new InvalidBookingStateException("Booking đã bị huỷ");
-        }
-        TheaterShowtimeDto showtime = theater.getShowtime(current.getShowtimeId());
-        if (!"SELLING".equalsIgnoreCase(showtime.status())) {
-            TransitionResult cancelled = persistence.cancel(id, userId, "SHOWTIME_NOT_SELLING");
-            safeRelease(cancelled, userId);
-            throw new ShowtimeNotSellingException();
-        }
-        PaymentConfirmationResult result = persistence.confirmWithPayment(
-            new PaymentConfirmationCommand(id, userId, paymentId, amount, currency));
-        safeRelease(result, userId);
-        return switch (result.outcome()) {
-            case NEWLY_CONFIRMED, ALREADY_CONFIRMED_SAME_PAYMENT -> InternalPaymentResult.of(result.booking(), result.outcome());
-            case NEWLY_EXPIRED, ALREADY_EXPIRED -> throw new BookingExpiredException();
-            case ALREADY_CONFIRMED_OTHER_PAYMENT -> InternalPaymentResult.of(result.booking(), result.outcome());
-            case CANCELLED -> throw new InvalidBookingStateException("Booking đã bị huỷ");
-        };
-    }
-
     public BookingPaymentStatus paymentStatus(UUID id, UUID userId) {
         return persistence.paymentStatus(id, userId);
     }

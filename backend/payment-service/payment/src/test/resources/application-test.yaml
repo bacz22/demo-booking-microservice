@@ -3,5 +3,12 @@ payment:
     reconciliation-enabled: false
 
 spring:
+  kafka:
+    listener:
+      auto-startup: false
   flyway:
     clean-disabled: false
+
+app:
+  outbox:
+    publisher-enabled: false

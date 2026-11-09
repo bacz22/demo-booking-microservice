@@ -1,11 +1,9 @@
 package com.cinebook.booking.controller;
 
 import com.cinebook.booking.config.InternalServiceKeyValidator;
-import com.cinebook.booking.controller.dto.ConfirmPaymentRequest;
 import com.cinebook.booking.controller.dto.InternalPaymentResponse;
 import com.cinebook.booking.service.BookingPaymentStatus;
 import com.cinebook.booking.service.BookingService;
-import com.cinebook.booking.service.InternalPaymentResult;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -36,15 +34,5 @@ public class InternalBookingController {
         keyValidator.requireValid(serviceKey);
         BookingPaymentStatus status = service.paymentStatus(id, userId);
         return InternalPaymentResponse.from(status, null);
-    }
-
-    @PostMapping("/{id}/confirm-payment")
-    public InternalPaymentResponse confirm(@PathVariable UUID id,
-                                           @RequestHeader("X-Service-Key") String serviceKey,
-                                           @RequestHeader("X-User-Id") UUID userId,
-                                           @Valid @RequestBody ConfirmPaymentRequest request) {
-        keyValidator.requireValid(serviceKey);
-        InternalPaymentResult result = service.confirmPaid(id, userId, request.paymentId(), request.amount(), request.currency());
-        return InternalPaymentResponse.from(BookingPaymentStatus.from(result.booking()), result.outcome());
     }
 }

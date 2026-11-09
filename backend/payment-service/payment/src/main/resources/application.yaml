@@ -28,12 +28,19 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-
+    # Producer/consumer được cấu hình trong config/KafkaConfig (acks=all, idempotence, String serde).
     consumer:
-      group-id: payment-service-test
-      auto-offset-reset: earliest
-      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      group-id: payment-service
+
+app:
+  kafka:
+    topics:
+      payment-events: payment.events
+      booking-events: booking.events
+  outbox:
+    publisher-enabled: ${OUTBOX_PUBLISHER_ENABLED:true}
+    poll-delay-ms: ${OUTBOX_POLL_DELAY_MS:500}
+    batch-size: ${OUTBOX_BATCH_SIZE:100}
 
 server:
   port: ${SERVER_PORT:8084}

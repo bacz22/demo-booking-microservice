@@ -1,8 +1,6 @@
 package com.cinebook.payment.client;
 
-import com.cinebook.payment.client.dto.BookingConfirmPaymentResponseDto;
 import com.cinebook.payment.client.dto.BookingPaymentStatusDto;
-import com.cinebook.payment.client.dto.ConfirmBookingPaymentRequest;
 import com.cinebook.payment.exception.BookingClientException;
 import com.cinebook.payment.exception.BookingUnavailableException;
 import com.cinebook.payment.exception.PaymentException;
@@ -37,22 +35,6 @@ public class BookingServiceClient {
         }
     }
 
-    public BookingConfirmPaymentResponseDto confirmPayment(UUID bookingId, UUID userId, UUID paymentId,
-                                                           BigDecimal amount, String currency) {
-        try {
-            BookingConfirmPaymentResponseDto response = restClient.post()
-                .uri("/api/internal/bookings/{id}/confirm-payment", bookingId)
-                .header("X-User-Id", userId.toString())
-                .body(new ConfirmBookingPaymentRequest(paymentId, amount, currency))
-                .retrieve().body(BookingConfirmPaymentResponseDto.class);
-            if (response == null) throw new BookingUnavailableException("Booking trả về response rỗng");
-            return response;
-        } catch (RestClientResponseException ex) {
-            throw map(ex);
-        } catch (ResourceAccessException ex) {
-            throw new BookingUnavailableException("Không thể kết nối booking-service");
-        }
-    }
 
     private PaymentException map(RestClientResponseException ex) {
         HttpStatus status = HttpStatus.resolve(ex.getStatusCode().value());

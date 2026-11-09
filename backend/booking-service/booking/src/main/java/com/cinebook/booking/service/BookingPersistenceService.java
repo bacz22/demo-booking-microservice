@@ -10,8 +10,11 @@ import com.cinebook.booking.exception.BookingNotFoundException;
 import com.cinebook.booking.exception.InvalidBookingStateException;
 import com.cinebook.booking.exception.PaymentAmountMismatchException;
 import com.cinebook.booking.exception.PaymentCurrencyMismatchException;
+import com.cinebook.booking.kafka.KafkaEvents;
+import com.cinebook.booking.kafka.outbox.OutboxWriter;
 import com.cinebook.booking.repository.BookingRepository;
 import com.cinebook.booking.repository.BookingSeatRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -29,11 +32,17 @@ public class BookingPersistenceService {
     private final BookingRepository bookings;
     private final BookingSeatRepository seats;
     private final Clock clock;
+    private final OutboxWriter outbox;
+    private final String bookingTopic;
 
-    public BookingPersistenceService(BookingRepository bookings, BookingSeatRepository seats, Clock clock) {
+    public BookingPersistenceService(BookingRepository bookings, BookingSeatRepository seats, Clock clock,
+                                     OutboxWriter outbox,
+                                     @Value("${app.kafka.topics.booking-events:booking.events}") String bookingTopic) {
         this.bookings = bookings;
         this.seats = seats;
         this.clock = clock;
+        this.outbox = outbox;
+        this.bookingTopic = bookingTopic;
     }
 
     @Transactional
@@ -97,12 +106,14 @@ public class BookingPersistenceService {
             bookingSeats.forEach(s -> s.markReleased(now));
             bookings.save(booking);
             seats.saveAllAndFlush(bookingSeats);
+            emitExpired(booking);
             return new TransitionResult(booking, seatIds, ConfirmOutcome.EXPIRED);
         }
         booking.confirm(now);
         bookingSeats.forEach(s -> s.markSold(now));
         bookings.save(booking);
         seats.saveAllAndFlush(bookingSeats);
+        emitConfirmed(booking);
         return new TransitionResult(booking, seatIds, ConfirmOutcome.CONFIRMED);
     }
 
@@ -136,12 +147,14 @@ public class BookingPersistenceService {
             bookingSeats.forEach(s -> s.markReleased(now));
             bookings.save(booking);
             seats.saveAllAndFlush(bookingSeats);
+            emitExpired(booking);
             return new PaymentConfirmationResult(booking, seatIds, PaymentConfirmationOutcome.NEWLY_EXPIRED);
         }
         booking.confirm(command.paymentId(), now);
         bookingSeats.forEach(s -> s.markSold(now));
         bookings.save(booking);
         seats.saveAllAndFlush(bookingSeats);
+        emitConfirmed(booking);
         return new PaymentConfirmationResult(booking, seatIds, PaymentConfirmationOutcome.NEWLY_CONFIRMED);
     }
 
@@ -165,6 +178,8 @@ public class BookingPersistenceService {
         bookingSeats.forEach(s -> s.markReleased(now));
         bookings.save(booking);
         seats.saveAllAndFlush(bookingSeats);
+        outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_CANCELLED,
+            new KafkaEvents.BookingCancelled(booking.getId(), booking.getUserId(), reason));
         return new TransitionResult(booking, bookingSeats.stream().map(BookingSeat::getSeatId).toList(), ConfirmOutcome.EXPIRED);
     }
 
@@ -180,11 +195,31 @@ public class BookingPersistenceService {
             bookingSeats.forEach(s -> s.markReleased(now));
             bookings.save(booking);
             seats.saveAll(bookingSeats);
+            emitExpired(booking);
             commands.add(new ReleaseCommand(booking.getShowtimeId(), bookingSeats.stream().map(BookingSeat::getSeatId).toList(), booking.getRequestId(), booking.getUserId()));
         }
         bookings.flush();
         seats.flush();
         return commands;
+    }
+
+    /** Phát lại BookingConfirmed cho payment đã gắn (khi nhận lại PaymentSucceeded trùng). */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void emitConfirmed(Booking booking) {
+        outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_CONFIRMED,
+            new KafkaEvents.BookingConfirmed(booking.getId(), booking.getUserId(), booking.getPaymentId(),
+                booking.getTotalAmount(), "VND"));
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void emitPaymentRejected(UUID bookingId, UUID userId, UUID paymentId, String reason, String message) {
+        outbox.write(bookingTopic, bookingId, KafkaEvents.BOOKING_PAYMENT_REJECTED,
+            new KafkaEvents.BookingPaymentRejected(bookingId, userId, paymentId, reason, message));
+    }
+
+    private void emitExpired(Booking booking) {
+        outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_EXPIRED,
+            new KafkaEvents.BookingExpired(booking.getId(), booking.getUserId()));
     }
 
     private void checkOwner(Booking booking, UUID userId) {

@@ -1,7 +1,6 @@
 package com.cinebook.payment.service;
 
 import com.cinebook.payment.client.BookingServiceClient;
-import com.cinebook.payment.client.dto.BookingConfirmPaymentResponseDto;
 import com.cinebook.payment.client.dto.BookingPaymentStatusDto;
 import com.cinebook.payment.controller.dto.CompletePaymentRequest;
 import com.cinebook.payment.controller.dto.CreatePaymentRequest;
@@ -9,8 +8,6 @@ import com.cinebook.payment.controller.dto.PaymentResponse;
 import com.cinebook.payment.domain.entity.Payment;
 import com.cinebook.payment.domain.enums.PaymentMethod;
 import com.cinebook.payment.domain.enums.PaymentStatus;
-import com.cinebook.payment.exception.BookingClientException;
-import com.cinebook.payment.exception.BookingUnavailableException;
 import com.cinebook.payment.exception.IdempotencyConflictException;
 import com.cinebook.payment.exception.PaymentBadRequestException;
 import com.cinebook.payment.exception.PaymentAccessDeniedException;
@@ -99,7 +96,7 @@ public class PaymentService {
 
     public PaymentResponse complete(UUID id, UUID userId, CompletePaymentRequest request) {
         Payment current = requireOwner(persistence.get(id), userId);
-        if (current.getStatus() == PaymentStatus.SUCCEEDED || current.getStatus() == PaymentStatus.FAILED) {
+        if (current.getStatus().isTerminal()) {
             return PaymentResponse.from(current);
         }
         if (!request.success()) return fail(current, request);
@@ -108,7 +105,7 @@ public class PaymentService {
 
     public PaymentResponse retry(UUID id, UUID userId) {
         Payment current = requireOwner(persistence.get(id), userId);
-        if (current.getStatus() == PaymentStatus.SUCCEEDED || current.getStatus() == PaymentStatus.FAILED) return PaymentResponse.from(current);
+        if (current.getStatus().isTerminal()) return PaymentResponse.from(current);
         return processSuccess(current);
     }
 
@@ -122,8 +119,6 @@ public class PaymentService {
         for (UUID id : ids) {
             try {
                 reconcile(id);
-            } catch (PaymentInProgressException | BookingUnavailableException ex) {
-                // Another worker may have won the claim, or booking-service may still be unavailable.
             } catch (RuntimeException ex) {
                 // One bad payment must not abort the whole reconciliation batch.
             }
@@ -135,46 +130,31 @@ public class PaymentService {
         String code = request.failureCode() == null || request.failureCode().isBlank() ? "MOCK_PAYMENT_FAILED" : request.failureCode();
         String message = request.failureMessage() == null || request.failureMessage().isBlank() ? "Mock payment thất bại" : request.failureMessage();
         if (current.getStatus() == PaymentStatus.PENDING) {
-            Optional<ClaimedPayment> failed = persistence.failPending(current.getId(), code, message, now);
+            Optional<ClaimedPayment> failed = persistence.failPending(current, code, message, now);
             if (failed.isEmpty()) return settleAfterRace(current.getId(), current.getUserId());
             return PaymentResponse.from(persistence.get(current.getId()));
         }
         Optional<ClaimedPayment> claimed = claim(current);
         if (claimed.isEmpty()) throw new PaymentInProgressException();
-        if (!persistence.fail(current.getId(), claimed.get().processingToken(), code, message, now)) {
+        if (!persistence.fail(current, claimed.get().processingToken(), code, message, now)) {
             throw new PaymentConflictException("PAYMENT_FENCED_OUT", "Payment đã được worker khác xử lý");
         }
         return PaymentResponse.from(persistence.get(current.getId()));
     }
 
+    /**
+     * Thu tiền (mock) thành công: chuyển payment sang PROCESSING và phát PaymentSucceeded qua outbox.
+     * Kết quả cuối (SUCCEEDED/FAILED) do BookingEventHandler chốt khi booking-service trả lời qua Kafka,
+     * nên API trả về PROCESSING — client poll GET /api/payments/{id}.
+     * Nếu payment kẹt PROCESSING quá lease, reconciliation job claim lại và phát lại event
+     * (booking-service xử lý idempotent theo paymentId).
+     */
     private PaymentResponse processSuccess(Payment current) {
+        if (current.getStatus().isTerminal()) return PaymentResponse.from(current);
         Instant now = Instant.now(clock);
-        if (current.getStatus() == PaymentStatus.SUCCEEDED || current.getStatus() == PaymentStatus.FAILED) return PaymentResponse.from(current);
-        Optional<ClaimedPayment> claimed = claim(current);
-        if (claimed.isEmpty()) {
-            Payment latest = persistence.get(current.getId());
-            if (latest.getStatus() == PaymentStatus.SUCCEEDED || latest.getStatus() == PaymentStatus.FAILED) return PaymentResponse.from(latest);
-            throw new PaymentInProgressException();
-        }
-        try {
-            BookingConfirmPaymentResponseDto result = booking.confirmPayment(current.getBookingId(), current.getUserId(),
-                current.getId(), current.getAmount(), current.getCurrency());
-            if ("NEWLY_CONFIRMED".equals(result.outcome()) || "ALREADY_CONFIRMED_SAME_PAYMENT".equals(result.outcome())) {
-                if (!persistence.succeed(current.getId(), claimed.get().processingToken(), "MOCK-" + current.getId(), now)) {
-                    throw new PaymentConflictException("PAYMENT_FENCED_OUT", "Payment đã bị worker khác thay thế");
-                }
-            } else {
-                if (!persistence.fail(current.getId(), claimed.get().processingToken(), "BOOKING_ALREADY_PAID", "Booking đã gắn với payment khác", now)) {
-                    throw new PaymentConflictException("PAYMENT_FENCED_OUT", "Payment đã bị worker khác thay thế");
-                }
-            }
-            return PaymentResponse.from(persistence.get(current.getId()));
-        } catch (BookingUnavailableException ex) {
-            throw ex; // Keep PROCESSING; reconciliation can claim after the lease expires.
-        } catch (BookingClientException ex) {
-            persistence.fail(current.getId(), claimed.get().processingToken(), ex.getCode(), ex.getMessage(), now);
-            return PaymentResponse.from(persistence.get(current.getId()));
-        }
+        persistence.claimAndRequestConfirmation(current, UUID.randomUUID(), now, now.minus(leaseSeconds, ChronoUnit.SECONDS));
+        // Claim thất bại = đang PROCESSING chờ booking trả lời, hoặc đã terminal: trả trạng thái hiện tại.
+        return PaymentResponse.from(persistence.get(current.getId()));
     }
 
     private Optional<ClaimedPayment> claim(Payment payment) {
@@ -184,7 +164,7 @@ public class PaymentService {
 
     private PaymentResponse settleAfterRace(UUID id, UUID userId) {
         Payment latest = requireOwner(persistence.get(id), userId);
-        if (latest.getStatus() == PaymentStatus.FAILED || latest.getStatus() == PaymentStatus.SUCCEEDED) return PaymentResponse.from(latest);
+        if (latest.getStatus().isTerminal()) return PaymentResponse.from(latest);
         throw new PaymentInProgressException();
     }
 
