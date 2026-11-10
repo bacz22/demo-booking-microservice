@@ -87,6 +87,11 @@ class PaymentEventsConsumerTest {
         assertEquals(List.of("BookingConfirmed"), outboxTypes());
         assertEquals(paymentId, jdbc.queryForObject("SELECT payment_id FROM bookings WHERE id = ?", UUID.class, booking.getId()));
         verify(seatHolds, times(1)).release(any(), any(), any(), any());
+        assertEquals(booking.getBookingCode(), jdbc.queryForObject(
+            "SELECT payload -> 'payload' -> 'details' ->> 'bookingCode' FROM outbox_events", String.class));
+        assertEquals("[\"A1\"]", jdbc.queryForObject(
+            "SELECT payload -> 'payload' -> 'details' ->> 'seatLabels' FROM outbox_events", String.class));
+        assertEquals(2, jdbc.queryForObject("SELECT (payload ->> 'schemaVersion')::int FROM outbox_events", Integer.class));
     }
 
     @Test

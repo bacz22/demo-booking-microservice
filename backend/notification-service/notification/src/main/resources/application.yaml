@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: notification-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5437}/${DB_NAME:notification_db}
+    username: ${DB_USERNAME:cinebook}
+    password: ${DB_PASSWORD:123456}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: notification-service-pool
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    time-zone: UTC
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    # Consumer được cấu hình trong config/KafkaConfig (String serde, retry + DLT).
+    consumer:
+      group-id: notification-service
+
+app:
+  kafka:
+    topics:
+      payment-events: payment.events
+      booking-events: booking.events
+
+server:
+  port: ${SERVER_PORT:8085}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"

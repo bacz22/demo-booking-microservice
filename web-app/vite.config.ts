@@ -43,6 +43,16 @@ export default defineConfig({
         target: 'http://localhost:8082',
         changeOrigin: true,
       },
+      // Payment Service (Port 8084)
+      '/api/payments': {
+        target: 'http://localhost:8084',
+        changeOrigin: true,
+      },
+      // Notification Service (Port 8085)
+      '/api/notifications': {
+        target: 'http://localhost:8085',
+        changeOrigin: true,
+      },
       // Booking Service (Port 8083)
       '/api/bookings': {
         target: 'http://localhost:8083',

@@ -1,11 +1,14 @@
 package com.cinebook.payment.kafka;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 /**
- * Hợp đồng event giữa booking-service và payment-service (schemaVersion = 1).
- * File này được giữ GIỐNG HỆT ở cả hai service — sửa một bên thì sửa cả bên kia.
+ * Hợp đồng event giữa booking-service và payment-service.
+ * schemaVersion 2: BookingConfirmed/BookingCancelled/BookingExpired có thêm {@link BookingDetails}
+ * (null ở event v1) để consumer như notification-service hiển thị được mà không cần gọi REST.
+ * File này được giữ GIỐNG HỆT ở booking, payment và notification — sửa một nơi thì sửa cả các nơi kia.
  *
  * payment.events : PaymentSucceeded, PaymentFailed, PaymentRefunded
  * booking.events : BookingConfirmed, BookingPaymentRejected, BookingCancelled, BookingExpired
@@ -32,9 +35,13 @@ public final class KafkaEvents {
     public record PaymentRefunded(UUID paymentId, UUID bookingId, UUID userId,
                                   BigDecimal amount, String currency, String reason) {}
 
+    /** Thông tin hiển thị của booking, gắn kèm event booking từ schemaVersion 2. */
+    public record BookingDetails(String bookingCode, UUID showtimeId, UUID movieId, UUID theaterId,
+                                 List<String> seatLabels, BigDecimal totalAmount, String currency) {}
+
     /** paymentId = null khi booking được xác nhận bằng mock confirm (không qua payment-service). */
     public record BookingConfirmed(UUID bookingId, UUID userId, UUID paymentId,
-                                   BigDecimal amount, String currency) {}
+                                   BigDecimal amount, String currency, BookingDetails details) {}
 
     /**
      * Booking không nhận được payment này (hết hạn, đã huỷ, đã trả bằng payment khác...).
@@ -43,7 +50,7 @@ public final class KafkaEvents {
     public record BookingPaymentRejected(UUID bookingId, UUID userId, UUID paymentId,
                                          String reason, String message) {}
 
-    public record BookingCancelled(UUID bookingId, UUID userId, String reason) {}
+    public record BookingCancelled(UUID bookingId, UUID userId, String reason, BookingDetails details) {}
 
-    public record BookingExpired(UUID bookingId, UUID userId) {}
+    public record BookingExpired(UUID bookingId, UUID userId, BookingDetails details) {}
 }

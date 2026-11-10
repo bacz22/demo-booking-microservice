@@ -29,6 +29,8 @@ import java.util.UUID;
 
 @Service
 public class BookingPersistenceService {
+    private static final int BOOKING_EVENT_VERSION = 2;
+    private static final String CURRENCY = "VND";
     private final BookingRepository bookings;
     private final BookingSeatRepository seats;
     private final Clock clock;
@@ -179,7 +181,8 @@ public class BookingPersistenceService {
         bookings.save(booking);
         seats.saveAllAndFlush(bookingSeats);
         outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_CANCELLED,
-            new KafkaEvents.BookingCancelled(booking.getId(), booking.getUserId(), reason));
+            new KafkaEvents.BookingCancelled(booking.getId(), booking.getUserId(), reason,
+                details(booking, bookingSeats)), BOOKING_EVENT_VERSION);
         return new TransitionResult(booking, bookingSeats.stream().map(BookingSeat::getSeatId).toList(), ConfirmOutcome.EXPIRED);
     }
 
@@ -208,7 +211,7 @@ public class BookingPersistenceService {
     public void emitConfirmed(Booking booking) {
         outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_CONFIRMED,
             new KafkaEvents.BookingConfirmed(booking.getId(), booking.getUserId(), booking.getPaymentId(),
-                booking.getTotalAmount(), "VND"));
+                booking.getTotalAmount(), CURRENCY, details(booking, null)), BOOKING_EVENT_VERSION);
     }
 
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
@@ -219,7 +222,19 @@ public class BookingPersistenceService {
 
     private void emitExpired(Booking booking) {
         outbox.write(bookingTopic, booking.getId(), KafkaEvents.BOOKING_EXPIRED,
-            new KafkaEvents.BookingExpired(booking.getId(), booking.getUserId()));
+            new KafkaEvents.BookingExpired(booking.getId(), booking.getUserId(), details(booking, null)),
+            BOOKING_EVENT_VERSION);
+    }
+
+    /** Thông tin hiển thị kèm event (schemaVersion 2). bookingSeats = null → tự đọc từ DB. */
+    private KafkaEvents.BookingDetails details(Booking booking, List<BookingSeat> bookingSeats) {
+        List<BookingSeat> list = bookingSeats != null ? bookingSeats : seats.findByBookingIdOrderBySeatNumber(booking.getId());
+        List<String> labels = list.stream()
+            .sorted(java.util.Comparator.comparing(BookingSeat::getRowLabel).thenComparingInt(BookingSeat::getSeatNumber))
+            .map(s -> s.getRowLabel() + s.getSeatNumber())
+            .toList();
+        return new KafkaEvents.BookingDetails(booking.getBookingCode(), booking.getShowtimeId(), booking.getMovieId(),
+            booking.getTheaterId(), labels, booking.getTotalAmount(), CURRENCY);
     }
 
     private void checkOwner(Booking booking, UUID userId) {

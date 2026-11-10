@@ -1,5 +1,5 @@
-import { useMemo, useEffect } from 'react'
-import { useLocation, Link } from 'react-router-dom'
+import { useMemo, useEffect, useState } from 'react'
+import { useLocation, useSearchParams, Link } from 'react-router-dom'
 import {
   CheckCircle2,
   Ticket,
@@ -12,48 +12,84 @@ import {
 import { Button } from '@/components/ui/button'
 import { CopyButton } from '@/components/ui/copy-button'
 import { formatPrice } from '@/lib/utils'
-import { toast } from '@/lib/toast'
+import { bookingApiService } from '@/services/booking-api.service'
+
+interface SuccessData {
+  bookingCode: string
+  movie: string
+  cinema: string
+  room: string
+  showtime: string
+  seats: string[]
+  total: number
+  paymentMethod: string
+}
 
 export default function PaymentSuccessPage() {
   const location = useLocation()
 
-  // 1. Dữ liệu thành công: ưu tiên lấy từ state của CheckoutPage, fallback về mock
-  const data = useMemo(() => {
-    const s = location.state
-    if (s && s.bookingCode) {
-      return {
-        bookingCode: s.bookingCode as string,
-        movie: (s.movie || 'Dune: Hành Tinh Cát - Phần Hai') as string,
-        cinema: (s.cinema || 'CineBook Landmark 81') as string,
-        room: (s.room || 'Phòng chiếu 02 - ScreenX') as string,
-        showtime: (s.showtime || '10:15 • Hôm nay, 14/09/2026') as string,
-        seats: (s.seats || ['C5', 'C6']) as string[],
-        total: (s.total || 190000) as number,
-        paymentMethod: (s.paymentMethod || 'VNPay') as string,
-      }
-    }
+  const [searchParams] = useSearchParams()
+  const queryBookingId = searchParams.get('bookingId')
+  const [fetched, setFetched] = useState<SuccessData | null>(null)
+  const [loadError, setLoadError] = useState(false)
 
+  // 1. Dữ liệu thành công: ưu tiên state từ CheckoutPage; reload trang thì lấy lại theo ?bookingId=
+  const fromState = useMemo<SuccessData | null>(() => {
+    const s = location.state
+    if (!s?.bookingCode) return null
     return {
-      bookingCode: 'CB-849201',
-      movie: 'Dune: Hành Tinh Cát - Phần Hai',
-      cinema: 'CineBook Landmark 81',
-      room: 'Phòng chiếu 02 - ScreenX',
-      showtime: '10:15 • Hôm nay, 14/09/2026',
-      seats: ['C5', 'C6'],
-      total: 190000,
-      paymentMethod: 'VNPay',
+      bookingCode: s.bookingCode,
+      movie: s.movie || 'Vé xem phim CineBook',
+      cinema: s.cinema || '',
+      room: s.room || '',
+      showtime: s.showtime || '',
+      seats: s.seats || [],
+      total: Number(s.total) || 0,
+      paymentMethod: s.paymentMethod || 'MOCK',
     }
   }, [location.state])
+
+  useEffect(() => {
+    if (fromState || !queryBookingId) return
+    bookingApiService
+      .getBookingById(queryBookingId)
+      .then((b) => {
+        const item = bookingApiService.mapBackendBookingToHistoryItem(b)
+        setFetched({
+          bookingCode: b.bookingCode,
+          movie: item.movieTitle,
+          cinema: item.cinema,
+          room: item.room ?? '',
+          showtime: item.showtime,
+          seats: item.seats,
+          total: item.total,
+          paymentMethod: 'MOCK',
+        })
+      })
+      .catch(() => setLoadError(true))
+  }, [fromState, queryBookingId])
+
+  const data = fromState ?? fetched
 
   // Cập nhật tiêu đề trang và hiển thị thông báo đặt vé thành công
   useEffect(() => {
     document.title = 'Đặt vé thành công | CineBook'
-    toast.bookingSuccess({
-      bookingCode: data.bookingCode,
-      movieTitle: data.movie,
-      seats: data.seats,
-    })
-  }, [data.bookingCode, data.movie, data.seats])
+  }, [])
+
+  if (!data) {
+    return (
+      <div className="max-w-2xl mx-auto py-16 text-center text-sm text-muted-foreground">
+        {loadError || !queryBookingId ? (
+          <div className="space-y-3">
+            <p>Không tìm thấy thông tin vé.</p>
+            <Link to="/my-bookings" className="text-primary underline">Xem vé của tôi</Link>
+          </div>
+        ) : (
+          'Đang tải thông tin vé...'
+        )}
+      </div>
+    )
+  }
 
 
 
