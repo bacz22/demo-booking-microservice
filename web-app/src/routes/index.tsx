@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/app-layout'
 import { AdminLayout } from '@/components/layout/admin-layout'
 import { RequireAdmin } from '@/components/auth/require-admin'
+import { RequireAuth } from '@/components/auth/require-auth'
 import HomePage from '@/pages/home'
 import MoviesPage from '@/pages/movies'
 import MovieDetailPage from '@/pages/movie-detail'
@@ -43,16 +44,19 @@ export function AppRoutes() {
         <Route path="/movies" element={<MoviesPage />} />
         <Route path="/movies/:movieId" element={<MovieDetailPage />} />
         <Route path="/cinemas" element={<CinemasPage />} />
-        <Route path="/booking/:showtimeId/seats" element={<SeatSelectionPage />} />
-        <Route path="/checkout" element={<CheckoutPage />} />
-        <Route path="/payment/success" element={<PaymentSuccessPage />} />
-        <Route path="/payment/failed" element={<PaymentFailedPage />} />
-        <Route path="/my-bookings" element={<MyBookingsPage />} />
-        <Route path="/my-bookings/:bookingId" element={<BookingDetailPage />} />
+        {/* Trang cần đăng nhập: danh tính lấy từ JWT qua API Gateway */}
+        <Route element={<RequireAuth />}>
+          <Route path="/booking/:showtimeId/seats" element={<SeatSelectionPage />} />
+          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route path="/payment/success" element={<PaymentSuccessPage />} />
+          <Route path="/payment/failed" element={<PaymentFailedPage />} />
+          <Route path="/my-bookings" element={<MyBookingsPage />} />
+          <Route path="/my-bookings/:bookingId" element={<BookingDetailPage />} />
+          <Route path="/profile" element={<ProfilePage />} />
+        </Route>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/profile" element={<ProfilePage />} />
         <Route path="/forbidden" element={<ForbiddenPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

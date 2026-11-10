@@ -7,28 +7,6 @@ import type {
 } from '@/types/booking'
 import type { BackendPageResponse } from '@/services/theater-api.service'
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-export const DEFAULT_USER_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
-
-/**
- * Lấy User UUID hợp lệ cho các request gọi tới Booking Service.
- * Ưu tiên user đăng nhập trong localStorage, fallback sang UUID demo.
- */
-export function getCurrentUserUuid(): string {
-  try {
-    const raw = localStorage.getItem('cinebook_user')
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed?.id && UUID_REGEX.test(parsed.id)) {
-        return parsed.id
-      }
-    }
-  } catch {
-    // Bỏ qua lỗi đọc localStorage
-  }
-  return DEFAULT_USER_UUID
-}
-
 /**
  * Sinh chuỗi Idempotency Key định dạng UUID phiên bản 4
  */
@@ -48,17 +26,11 @@ class BookingApiService {
 
   /**
    * Lấy sơ đồ ghế thời gian thực (real-time availability) của suất chiếu.
-   * Gửi X-User-Id để backend nhận diện ghế do chính user đang giữ (HELD_BY_ME).
+   * Đã đăng nhập thì gateway gắn X-User-Id để backend nhận diện ghế do chính user đang giữ (HELD_BY_ME).
    */
   async getShowtimeSeats(showtimeId: string): Promise<BackendSeatAvailabilityResponse> {
-    const userId = getCurrentUserUuid()
     return apiClient.get<BackendSeatAvailabilityResponse>(
-      `${this.baseUrl}/showtimes/${showtimeId}/seats`,
-      {
-        headers: {
-          'X-User-Id': userId,
-        },
-      }
+      `${this.baseUrl}/showtimes/${showtimeId}/seats`
     )
   }
 
@@ -70,13 +42,11 @@ class BookingApiService {
     data: CreateBookingRequest,
     idempotencyKey = generateIdempotencyKey()
   ): Promise<BackendBookingResponse> {
-    const userId = getCurrentUserUuid()
     return apiClient.post<BackendBookingResponse>(
       `${this.baseUrl}/hold`,
       data,
       {
         headers: {
-          'X-User-Id': userId,
           'Idempotency-Key': idempotencyKey,
         },
       }
@@ -88,15 +58,9 @@ class BookingApiService {
    * Backend sẽ chuyển trạng thái sang CONFIRMED và ghế sang SOLD.
    */
   async confirmBooking(bookingId: string): Promise<BackendBookingResponse> {
-    const userId = getCurrentUserUuid()
     return apiClient.post<BackendBookingResponse>(
       `${this.baseUrl}/${bookingId}/confirm`,
-      undefined,
-      {
-        headers: {
-          'X-User-Id': userId,
-        },
-      }
+      undefined
     )
   }
 
@@ -105,15 +69,9 @@ class BookingApiService {
    * Giải phóng ngay lập tức Redis key và chuyển trạng thái sang CANCELLED.
    */
   async cancelBooking(bookingId: string): Promise<BackendBookingResponse> {
-    const userId = getCurrentUserUuid()
     return apiClient.post<BackendBookingResponse>(
       `${this.baseUrl}/${bookingId}/cancel`,
-      undefined,
-      {
-        headers: {
-          'X-User-Id': userId,
-        },
-      }
+      undefined
     )
   }
 
@@ -121,14 +79,8 @@ class BookingApiService {
    * Lấy chi tiết đơn đặt vé theo ID.
    */
   async getBookingById(bookingId: string): Promise<BackendBookingResponse> {
-    const userId = getCurrentUserUuid()
     return apiClient.get<BackendBookingResponse>(
-      `${this.baseUrl}/${bookingId}`,
-      {
-        headers: {
-          'X-User-Id': userId,
-        },
-      }
+      `${this.baseUrl}/${bookingId}`
     )
   }
 
@@ -139,14 +91,8 @@ class BookingApiService {
     page = 0,
     pageSize = 20
   ): Promise<BackendPageResponse<BackendBookingResponse>> {
-    const userId = getCurrentUserUuid()
     return apiClient.get<BackendPageResponse<BackendBookingResponse>>(
-      `${this.baseUrl}/me?page=${page}&pageSize=${pageSize}`,
-      {
-        headers: {
-          'X-User-Id': userId,
-        },
-      }
+      `${this.baseUrl}/me?page=${page}&pageSize=${pageSize}`
     )
   }
 

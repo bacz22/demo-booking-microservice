@@ -145,7 +145,7 @@ export function Navbar() {
             </Button>
           )}
 
-          <NotificationBell />
+          {isAuthenticated && <NotificationBell />}
 
           {/* Nút chuyển đổi giao diện Dark / Light */}
           <ThemeToggle />
@@ -256,7 +256,7 @@ export function Navbar() {
             </Link>
           </Button>
 
-          <NotificationBell />
+          {isAuthenticated && <NotificationBell />}
 
           <ThemeToggle />
 

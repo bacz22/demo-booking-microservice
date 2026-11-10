@@ -53,3 +53,8 @@ cinebook:
       base-url: ${MOVIE_SERVICE_URL:http://localhost:8081}
       connect-timeout-ms: ${MOVIE_SERVICE_CONNECT_TIMEOUT:3000}
       read-timeout-ms: ${MOVIE_SERVICE_READ_TIMEOUT:5000}
+
+app:
+  security:
+    # Phải khớp api-gateway; để trống = tắt kiểm tra.
+    gateway-secret: ${GATEWAY_SECRET:local-dev-gateway-secret}

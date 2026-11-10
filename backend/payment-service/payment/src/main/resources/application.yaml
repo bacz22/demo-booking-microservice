@@ -33,6 +33,9 @@ spring:
       group-id: payment-service
 
 app:
+  security:
+    # Phải khớp api-gateway; để trống = tắt kiểm tra.
+    gateway-secret: ${GATEWAY_SECRET:local-dev-gateway-secret}
   kafka:
     topics:
       payment-events: payment.events

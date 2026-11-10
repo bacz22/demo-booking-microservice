@@ -23,6 +23,9 @@ public class RestClientConfig {
     @Value("${cinebook.services.movie-service.read-timeout-ms:5000}")
     private int readTimeoutMs;
 
+    @Value("${app.security.gateway-secret:}")
+    private String gatewaySecret;
+
     @Bean
     public RestClient movieServiceRestClient() {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
@@ -32,6 +35,8 @@ public class RestClientConfig {
         return RestClient.builder()
             .baseUrl(movieServiceBaseUrl)
             .requestFactory(requestFactory)
+            // movie-service chỉ nhận /api/** kèm secret của gateway
+            .defaultHeader(GatewaySecretFilter.HEADER, gatewaySecret)
             .requestInterceptor((request, body, execution) -> {
                 String correlationId = MDC.get("correlationId");
                 if (correlationId != null && !correlationId.isBlank()) {

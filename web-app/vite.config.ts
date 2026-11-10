@@ -14,53 +14,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Theater Service (Port 8082)
-      '^/api/movies/[^/]+/showtimes': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/theaters': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/admin/theaters': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/auditoriums': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/admin/auditoriums': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/showtimes': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      '/api/admin/showtimes': {
-        target: 'http://localhost:8082',
-        changeOrigin: true,
-      },
-      // Payment Service (Port 8084)
-      '/api/payments': {
-        target: 'http://localhost:8084',
-        changeOrigin: true,
-      },
-      // Notification Service (Port 8085)
-      '/api/notifications': {
-        target: 'http://localhost:8085',
-        changeOrigin: true,
-      },
-      // Booking Service (Port 8083)
-      '/api/bookings': {
-        target: 'http://localhost:8083',
-        changeOrigin: true,
-      },
-      // Movie Service (Port 8081 - fallback for /api/movies, /api/genres, /api/admin/movies, etc.)
+      // Mọi API đi qua API Gateway (port 8080): xác thực JWT, phân quyền, định tuyến tới từng service
       '/api': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
     },

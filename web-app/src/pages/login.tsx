@@ -20,7 +20,17 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { login, isAuthenticated, user, logout } = useAuth()
-  const from = (location.state as { from?: string } | null)?.from || '/'
+  // Trang cần quay lại sau đăng nhập: state.from (chuỗi hoặc location) hoặc ?returnUrl=
+  const stateFrom = (location.state as { from?: string | { pathname?: string; search?: string } } | null)?.from
+  const returnUrl = new URLSearchParams(location.search).get('returnUrl')
+  const rawFrom =
+    typeof stateFrom === 'string'
+      ? stateFrom
+      : stateFrom?.pathname
+        ? `${stateFrom.pathname}${stateFrom.search ?? ''}`
+        : returnUrl || '/'
+  // Chỉ cho phép đường dẫn nội bộ để tránh open redirect
+  const from = rawFrom.startsWith('/') && !rawFrom.startsWith('//') ? rawFrom : '/'
 
   const [formKey, setFormKey] = useState(0)
   const [defaultEmail, setDefaultEmail] = useState('')
@@ -52,7 +62,7 @@ export default function LoginPage() {
   // Điền tài khoản thử nghiệm nhanh (cả Email và Mật khẩu)
   const fillDemoAccount = () => {
     setDefaultEmail('demo@cinebook.vn')
-    setDefaultPassword('123456')
+    setDefaultPassword('Demo@123')
     setFormKey((prev) => prev + 1)
   }
 
@@ -219,7 +229,7 @@ export default function LoginPage() {
             <div className="space-y-0.5 text-center sm:text-left">
               <span className="font-semibold text-foreground">Tài khoản trải nghiệm nhanh:</span>
               <div className="text-[11px] text-muted-foreground/90">
-                demo@cinebook.vn &bull; Mật khẩu: 123456
+                demo@cinebook.vn &bull; Mật khẩu: Demo@123
               </div>
             </div>
 

@@ -1,5 +1,5 @@
 import { apiClient } from '@/lib/api-client'
-import { generateIdempotencyKey, getCurrentUserUuid } from '@/services/booking-api.service'
+import { generateIdempotencyKey } from '@/services/booking-api.service'
 import type {
   BackendPaymentResponse,
   BackendPaymentStatus,
@@ -19,8 +19,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 class PaymentApiService {
   private readonly baseUrl = '/payments'
 
+  // X-User-Id do API Gateway gắn từ JWT, client không tự gửi
   private headers(extra?: Record<string, string>) {
-    return { 'X-User-Id': getCurrentUserUuid(), ...extra }
+    return { ...extra }
   }
 
   /** Tạo payment cho booking. Idempotency-Key giữ nguyên khi bấm lại để không tạo trùng. */

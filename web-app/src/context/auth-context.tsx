@@ -1,6 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import type { LoginFormData, RegisterFormData } from '@/types/auth'
 import { toast } from '@/lib/toast'
+import { ApiClientError } from '@/lib/api-client'
+import { tokenStore } from '@/lib/token-store'
+import { authApiService, type BackendAuthUser } from '@/services/auth-api.service'
 
 export interface AuthUser {
   id: string
@@ -25,72 +28,51 @@ export interface AuthContextType {
   hasRole: (role: 'USER' | 'ADMIN') => boolean
 }
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-export const DEMO_USER_UUID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+const STORAGE_KEY = 'cinebook_user'
+const DEFAULT_AVATAR =
+  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80'
 
-function generateUserUuid(): string {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-    return crypto.randomUUID()
+/** Gộp thông tin thật từ auth-service với các trường hiển thị chỉ có ở client (avatar, hạng thành viên). */
+function toAuthUser(u: BackendAuthUser, previous?: AuthUser | null): AuthUser {
+  const keep = previous?.id === u.id ? previous : null
+  return {
+    id: u.id,
+    fullName: u.fullName,
+    email: u.email,
+    phone: u.phone ?? undefined,
+    roles: u.roles,
+    avatarUrl: keep?.avatarUrl || DEFAULT_AVATAR,
+    membershipTier: keep?.membershipTier || 'MEMBER',
+    points: keep?.points ?? 0,
+    joinDate: keep?.joinDate || `Tháng ${new Date(u.createdAt).toLocaleDateString('vi-VN', { month: '2-digit', year: 'numeric' })}`,
   }
-  return 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
 }
 
-const STORAGE_KEY = 'cinebook_user'
+function readStoredUser(): AuthUser | null {
+  // Chỉ coi là đã đăng nhập khi còn token; user lưu kèm để hiển thị ngay khi tải trang
+  if (!tokenStore.get()) return null
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    const parsed = stored ? JSON.parse(stored) : null
+    return parsed && typeof parsed.id === 'string' ? (parsed as AuthUser) : null
+  } catch {
+    return null
+  }
+}
 
-const DEFAULT_DEMO_USER: AuthUser = {
-  id: DEMO_USER_UUID,
-  fullName: 'Nguyễn Văn An',
-  email: 'demo@cinebook.vn',
-  phone: '0912 345 678',
-  avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80',
-  membershipTier: 'DIAMOND',
-  points: 1250,
-  joinDate: 'Tháng 03/2024',
-  roles: ['USER', 'ADMIN'],
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiClientError) {
+    if (err.code === 'NETWORK_ERROR' || err.status === 0) return 'Không kết nối được máy chủ. Vui lòng thử lại.'
+    if (err.code === 'RATE_LIMITED') return 'Bạn thao tác quá nhanh, vui lòng thử lại sau ít phút.'
+    return err.message || fallback
+  }
+  return fallback
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored)
-        if (parsed && typeof parsed === 'object') {
-          const email = typeof parsed.email === 'string' && parsed.email ? parsed.email : 'demo@cinebook.vn'
-          const fullName = typeof parsed.fullName === 'string' && parsed.fullName.trim()
-            ? parsed.fullName
-            : (email.split('@')[0] || 'Khách hàng CineBook')
-
-          const isDemoEmail = email.toLowerCase().trim() === 'demo@cinebook.vn'
-          const roles = Array.isArray(parsed.roles) && parsed.roles.length > 0
-            ? parsed.roles
-            : (isDemoEmail ? ['USER', 'ADMIN'] : ['USER'])
-
-          const validId = parsed.id && UUID_REGEX.test(parsed.id)
-            ? parsed.id
-            : (isDemoEmail ? DEMO_USER_UUID : generateUserUuid())
-
-          return {
-            id: validId,
-            fullName,
-            email,
-            phone: parsed.phone || '0912 345 678',
-            avatarUrl: parsed.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80',
-            membershipTier: parsed.membershipTier || 'DIAMOND',
-            points: typeof parsed.points === 'number' ? parsed.points : 1250,
-            joinDate: parsed.joinDate || 'Tháng 03/2024',
-            roles,
-          }
-        }
-      }
-    } catch {
-      // Bỏ qua nếu lỗi parse localStorage
-    }
-    return null
-  })
-
+  const [user, setUser] = useState<AuthUser | null>(readStoredUser)
   const [isLoading, setIsLoading] = useState(false)
 
   // Đồng bộ thay đổi user vào localStorage
@@ -106,70 +88,78 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user])
 
+  // Refresh token hết hạn/bị thu hồi → đăng xuất phía client
+  useEffect(
+    () =>
+      tokenStore.onExpired(() => {
+        setUser((prev) => {
+          if (prev) toast.info('Phiên đăng nhập đã hết hạn, vui lòng đăng nhập lại.')
+          return null
+        })
+      }),
+    []
+  )
+
+  // Tải lại thông tin user (roles mới nhất) khi mở trang
+  useEffect(() => {
+    if (!tokenStore.get()) return
+    authApiService
+      .me()
+      .then((u) => setUser((prev) => toAuthUser(u, prev)))
+      .catch(() => {
+        // 401 sau khi refresh thất bại đã được xử lý qua onExpired; lỗi mạng thì giữ user cũ
+      })
+  }, [])
+
   // Xử lý đăng nhập
   const login = async (data: LoginFormData): Promise<boolean> => {
     setIsLoading(true)
-    // Giả lập độ trễ mạng 500ms
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
     try {
-      const isDemo = data.email.toLowerCase().trim() === 'demo@cinebook.vn'
-      const loggedUser: AuthUser = isDemo
-        ? DEFAULT_DEMO_USER
-        : {
-            id: generateUserUuid(),
-            fullName: data.email.split('@')[0] || 'Khách hàng CineBook',
-            email: data.email.trim(),
-            phone: '0912 345 678',
-            avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80',
-            membershipTier: 'GOLD',
-            points: 500,
-            joinDate: 'Tháng 09/2026',
-            roles: data.email.toLowerCase().includes('admin') ? ['USER', 'ADMIN'] : ['USER'],
-          }
-
+      const res = await authApiService.login(data.email.trim(), data.password)
+      tokenStore.set({ accessToken: res.accessToken, refreshToken: res.refreshToken })
+      const loggedUser = toAuthUser(res.user, user)
       setUser(loggedUser)
-      setIsLoading(false)
       toast.success(`Chào mừng bạn trở lại, ${loggedUser.fullName}!`)
       return true
-    } catch {
-      setIsLoading(false)
-      toast.error('Đăng nhập không thành công. Vui lòng kiểm tra lại thông tin.')
+    } catch (err) {
+      toast.error(errorMessage(err, 'Đăng nhập không thành công. Vui lòng kiểm tra lại thông tin.'))
       return false
+    } finally {
+      setIsLoading(false)
     }
   }
 
   // Xử lý đăng ký
   const register = async (data: RegisterFormData): Promise<boolean> => {
     setIsLoading(true)
-    await new Promise((resolve) => setTimeout(resolve, 600))
-
     try {
-      const newUser: AuthUser = {
-        id: generateUserUuid(),
-        fullName: data.fullName.trim(),
+      const res = await authApiService.register({
         email: data.email.trim(),
-        phone: data.phone?.trim() || '',
-        avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80',
-        membershipTier: 'MEMBER',
-        points: 100, // Tặng 100 điểm khởi đầu
-        joinDate: 'Tháng 09/2026',
-        roles: ['USER'],
-      }
-
+        password: data.password,
+        fullName: data.fullName.trim(),
+        phone: data.phone?.trim() || undefined,
+      })
+      tokenStore.set({ accessToken: res.accessToken, refreshToken: res.refreshToken })
+      const newUser = toAuthUser(res.user)
       setUser(newUser)
-      setIsLoading(false)
       toast.success(`Đăng ký thành công! Chào mừng ${newUser.fullName} đến với CineBook.`)
       return true
-    } catch {
-      setIsLoading(false)
-      toast.error('Đăng ký không thành công. Vui lòng thử lại.')
+    } catch (err) {
+      toast.error(errorMessage(err, 'Đăng ký không thành công. Vui lòng thử lại.'))
       return false
+    } finally {
+      setIsLoading(false)
     }
   }
 
   // Xử lý đăng xuất
   const logout = () => {
+    const tokens = tokenStore.get()
+    if (tokens) {
+      // Thu hồi refresh token phía server; lỗi mạng không chặn việc đăng xuất
+      authApiService.logout(tokens.refreshToken).catch(() => {})
+    }
+    tokenStore.clear()
     setUser(null)
     try {
       localStorage.removeItem(STORAGE_KEY)

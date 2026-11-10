@@ -11,17 +11,51 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.ResourceAccessException;
 
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+
+import java.time.Duration;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 @Component
 public class TheaterServiceClient {
     private final RestClient restClient;
+    private final CircuitBreaker circuitBreaker;
 
     public TheaterServiceClient(RestClient theaterRestClient) {
         this.restClient = theaterRestClient;
+        // Chỉ lỗi hạ tầng (theater down/5xx/timeout) mới tính vào circuit; 404 là lỗi nghiệp vụ.
+        this.circuitBreaker = CircuitBreaker.of("theater-service", CircuitBreakerConfig.custom()
+            .slidingWindowSize(10)
+            .minimumNumberOfCalls(5)
+            .failureRateThreshold(50)
+            .waitDurationInOpenState(Duration.ofSeconds(30))
+            .permittedNumberOfCallsInHalfOpenState(2)
+            .recordExceptions(TheaterServiceUnavailableException.class)
+            .build());
     }
 
     public TheaterShowtimeDto getShowtime(UUID showtimeId) {
+        return protect(() -> fetchShowtime(showtimeId));
+    }
+
+    @Cacheable(cacheNames = "theaterSeatMaps", key = "#showtimeId")
+    public TheaterSeatMapDto getSeatMap(UUID showtimeId) {
+        return protect(() -> fetchSeatMap(showtimeId));
+    }
+
+    /** Circuit đang mở → báo lỗi ngay (503) thay vì chờ timeout từng request. */
+    private <T> T protect(Supplier<T> call) {
+        try {
+            return circuitBreaker.executeSupplier(call);
+        } catch (CallNotPermittedException ex) {
+            throw new TheaterServiceUnavailableException("theater-service đang tạm ngắt (circuit breaker mở)");
+        }
+    }
+
+    private TheaterShowtimeDto fetchShowtime(UUID showtimeId) {
         try {
             TheaterShowtimeDto result = restClient.get().uri("/api/showtimes/{id}", showtimeId)
                 .retrieve().body(TheaterShowtimeDto.class);
@@ -37,8 +71,7 @@ public class TheaterServiceClient {
         }
     }
 
-    @Cacheable(cacheNames = "theaterSeatMaps", key = "#showtimeId")
-    public TheaterSeatMapDto getSeatMap(UUID showtimeId) {
+    private TheaterSeatMapDto fetchSeatMap(UUID showtimeId) {
         try {
             TheaterSeatMapDto result = restClient.get().uri("/api/showtimes/{id}/seats", showtimeId)
                 .retrieve().body(TheaterSeatMapDto.class);

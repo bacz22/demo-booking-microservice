@@ -67,6 +67,9 @@ logging:
     level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"
 
 app:
+  security:
+    # Phải khớp api-gateway; để trống = tắt kiểm tra.
+    gateway-secret: ${GATEWAY_SECRET:local-dev-gateway-secret}
   kafka:
     topics:
       payment-events: payment.events

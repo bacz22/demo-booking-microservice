@@ -1,0 +1,5 @@
+app:
+  security:
+    gateway-secret: ""
+  seed:
+    enabled: false

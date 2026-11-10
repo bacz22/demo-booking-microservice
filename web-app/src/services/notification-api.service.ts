@@ -1,5 +1,4 @@
 import { apiClient } from '@/lib/api-client'
-import { getCurrentUserUuid } from '@/services/booking-api.service'
 
 export type NotificationType =
   | 'BOOKING_CONFIRMED'
@@ -28,8 +27,9 @@ export interface NotificationPage {
 class NotificationApiService {
   private readonly baseUrl = '/notifications'
 
+  // X-User-Id do API Gateway gắn từ JWT
   private headers() {
-    return { 'X-User-Id': getCurrentUserUuid() }
+    return {}
   }
 
   async getMine(page = 0, pageSize = 10): Promise<NotificationPage> {
