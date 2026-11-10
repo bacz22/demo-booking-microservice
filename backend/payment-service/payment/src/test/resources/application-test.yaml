@@ -10,5 +10,7 @@ spring:
     clean-disabled: false
 
 app:
+  security:
+    gateway-secret: ""
   outbox:
     publisher-enabled: false

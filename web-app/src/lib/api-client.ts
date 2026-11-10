@@ -1,7 +1,10 @@
 /**
  * CineBook API Client
- * Bọc fetch API với Correlation-Id, Error handling theo chuẩn Spring Boot Backend
+ * Bọc fetch API với Correlation-Id, Error handling theo chuẩn Spring Boot Backend.
+ * Mọi request đi qua API Gateway: tự gắn Authorization: Bearer <accessToken>;
+ * gặp 401 thì refresh token một lần rồi gửi lại.
  */
+import { tokenStore } from '@/lib/token-store'
 
 export interface ApiErrorResponse {
   code?: string
@@ -40,21 +43,67 @@ function generateUUID(): string {
   })
 }
 
-async function request<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
+function buildUrl(endpoint: string): string {
   let cleanEndpoint = endpoint
   if (BASE_URL.endsWith('/api') && cleanEndpoint.startsWith('/api/')) {
     cleanEndpoint = cleanEndpoint.slice(4)
   }
-  const url = cleanEndpoint.startsWith('http')
+  return cleanEndpoint.startsWith('http')
     ? cleanEndpoint
     : `${BASE_URL}${cleanEndpoint.startsWith('/') ? cleanEndpoint : `/${cleanEndpoint}`}`
+}
+
+// Một lần refresh dùng chung cho các request 401 đồng thời
+let refreshInFlight: Promise<boolean> | null = null
+
+async function refreshTokens(): Promise<boolean> {
+  const tokens = tokenStore.get()
+  if (!tokens) return false
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch(buildUrl('/auth/refresh'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ refreshToken: tokens.refreshToken }),
+        })
+        if (!res.ok) {
+          tokenStore.notifyExpired()
+          return false
+        }
+        const data = await res.json()
+        tokenStore.set({ accessToken: data.accessToken, refreshToken: data.refreshToken })
+        return true
+      } catch {
+        return false
+      } finally {
+        setTimeout(() => {
+          refreshInFlight = null
+        }, 0)
+      }
+    })()
+  }
+  return refreshInFlight
+}
+
+function isAuthEndpoint(endpoint: string): boolean {
+  return /^\/?(api\/)?auth\/(login|register|refresh|logout)/.test(endpoint)
+}
+
+async function request<T>(
+  endpoint: string,
+  options: RequestInit = {},
+  retried = false
+): Promise<T> {
+  const url = buildUrl(endpoint)
 
   const headers = new Headers(options.headers || {})
   if (!headers.has('X-Correlation-Id')) {
     headers.set('X-Correlation-Id', generateUUID())
+  }
+  const tokens = tokenStore.get()
+  if (tokens && !headers.has('Authorization') && !isAuthEndpoint(endpoint)) {
+    headers.set('Authorization', `Bearer ${tokens.accessToken}`)
   }
   if (!headers.has('Accept')) {
     headers.set('Accept', 'application/json')
@@ -72,6 +121,15 @@ async function request<T>(
 
   try {
     const response = await fetch(url, config)
+
+    // Access token hết hạn → refresh một lần rồi gửi lại request
+    if (response.status === 401 && tokens && !retried && !isAuthEndpoint(endpoint)) {
+      if (await refreshTokens()) {
+        const retryHeaders = new Headers(options.headers || {})
+        retryHeaders.delete('Authorization')
+        return request<T>(endpoint, { ...options, headers: retryHeaders }, true)
+      }
+    }
 
     // Xử lý status 204 No Content
     if (response.status === 204) {

@@ -15,11 +15,14 @@ public class RestClientConfig {
     RestClient theaterRestClient(
         @Value("${booking.services.theater.url:http://localhost:8082}") String baseUrl,
         @Value("${booking.services.theater.connect-timeout:3s}") Duration connectTimeout,
-        @Value("${booking.services.theater.read-timeout:5s}") Duration readTimeout) {
+        @Value("${booking.services.theater.read-timeout:5s}") Duration readTimeout,
+        @Value("${app.security.gateway-secret:}") String gatewaySecret) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeout);
         factory.setReadTimeout(readTimeout);
         return RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
+            // theater-service chỉ nhận /api/** kèm secret của gateway
+            .defaultHeader(GatewaySecretFilter.HEADER, gatewaySecret)
             .requestInterceptor((request, body, execution) -> {
                 String correlationId = MDC.get("correlationId");
                 if (correlationId != null && !correlationId.isBlank()) {

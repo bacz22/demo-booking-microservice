@@ -1,0 +1,49 @@
+spring:
+  application:
+    name: auth-service
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5438}/${DB_NAME:auth_db}
+    username: ${DB_USERNAME:cinebook}
+    password: ${DB_PASSWORD:123456}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: auth-service-pool
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  jackson:
+    time-zone: UTC
+
+app:
+  security:
+    # Phải khớp api-gateway; để trống = tắt kiểm tra.
+    gateway-secret: ${GATEWAY_SECRET:local-dev-gateway-secret}
+  jwt:
+    # PEM PKCS#8, ví dụ file:/run/secrets/jwt-private.pem. Để trống = sinh key tạm khi khởi động (dev).
+    private-key-location: ${JWT_PRIVATE_KEY_LOCATION:}
+    key-id: ${JWT_KEY_ID:cinebook-auth-1}
+    access-token-ttl: ${JWT_ACCESS_TTL:15m}
+    refresh-token-ttl: ${JWT_REFRESH_TTL:7d}
+  seed:
+    enabled: ${AUTH_SEED_ENABLED:true}
+    demo-password: ${AUTH_DEMO_PASSWORD:Demo@123}
+    admin-password: ${AUTH_ADMIN_PASSWORD:Admin@123}
+
+server:
+  port: ${SERVER_PORT:8086}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  pattern:
+    level: "%5p [${spring.application.name:},traceId=%X{traceId:-},spanId=%X{spanId:-},correlationId=%X{correlationId:-}]"

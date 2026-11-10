@@ -101,6 +101,26 @@ services:
     networks:
       - cinebook
 
+  postgres-auth:
+    image: postgres:16-alpine
+    container_name: cinebook-postgres-auth
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: auth_db
+      POSTGRES_USER: cinebook
+      POSTGRES_PASSWORD: "123456"
+    ports:
+      - "5438:5432"
+    volumes:
+      - postgres_auth_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cinebook -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - cinebook
+
   redis:
     image: redis:7.4-alpine
     container_name: cinebook-redis
@@ -185,7 +205,8 @@ services:
       kafka:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      # 8080 dành cho api-gateway
+      - "8090:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: cinebook-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
@@ -199,6 +220,7 @@ volumes:
   postgres_booking_data:
   postgres_payment_data:
   postgres_notification_data:
+  postgres_auth_data:
   redis_data:
 
 networks:

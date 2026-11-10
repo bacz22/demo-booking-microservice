@@ -11,17 +11,40 @@ import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.ResourceAccessException;
 
 import java.math.BigDecimal;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+
+import java.time.Duration;
 import java.util.UUID;
 
 @Component
 public class BookingServiceClient {
     private final RestClient restClient;
+    private final CircuitBreaker circuitBreaker;
 
     public BookingServiceClient(RestClient bookingRestClient) {
         this.restClient = bookingRestClient;
+        // Chỉ lỗi hạ tầng mới tính vào circuit; booking từ chối (4xx) là lỗi nghiệp vụ.
+        this.circuitBreaker = CircuitBreaker.of("booking-service", CircuitBreakerConfig.custom()
+            .slidingWindowSize(10)
+            .minimumNumberOfCalls(5)
+            .failureRateThreshold(50)
+            .waitDurationInOpenState(Duration.ofSeconds(30))
+            .permittedNumberOfCallsInHalfOpenState(2)
+            .recordExceptions(BookingUnavailableException.class)
+            .build());
     }
 
     public BookingPaymentStatusDto getPaymentStatus(UUID bookingId, UUID userId) {
+        try {
+            return circuitBreaker.executeSupplier(() -> fetchPaymentStatus(bookingId, userId));
+        } catch (CallNotPermittedException ex) {
+            throw new BookingUnavailableException("booking-service đang tạm ngắt (circuit breaker mở)");
+        }
+    }
+
+    private BookingPaymentStatusDto fetchPaymentStatus(UUID bookingId, UUID userId) {
         try {
             BookingPaymentStatusDto response = restClient.get()
                 .uri(uri -> uri.path("/api/internal/bookings/{id}/payment-status").queryParam("userId", userId).build(bookingId))
