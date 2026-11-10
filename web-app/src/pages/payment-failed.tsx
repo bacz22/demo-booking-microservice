@@ -26,6 +26,8 @@ export default function PaymentFailedPage() {
         (s?.message as string) ||
         'Giao dịch thanh toán không thành công do phiên giao dịch hết hạn, tài khoản không đủ số dư hoặc yêu cầu bị hủy bỏ bởi người dùng.',
       reason: (s?.reason as string) || 'Giao dịch chưa hoàn tất',
+      refunded: Boolean(s?.refunded),
+      failureCode: s?.failureCode as string | undefined,
       total: s?.total as number | undefined,
     }
   }, [location.state])
@@ -53,7 +55,7 @@ export default function PaymentFailedPage() {
 
         <div className="space-y-1.5">
           <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground">
-            Thanh toán thất bại
+            {data.refunded ? 'Đã hoàn tiền giao dịch' : 'Thanh toán thất bại'}
           </h1>
           <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed max-w-md mx-auto">
             {data.message}
@@ -86,6 +88,12 @@ export default function PaymentFailedPage() {
 
         {/* Gợi ý nguyên nhân & Cách khắc phục */}
         <div className="p-5 sm:p-6 space-y-4">
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3.5 text-xs sm:text-sm text-foreground">
+            <strong>Lý do:</strong> {data.reason}
+            {data.failureCode && (
+              <span className="ml-1 font-mono text-[11px] text-muted-foreground">({data.failureCode})</span>
+            )}
+          </div>
           <div className="space-y-2">
             <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
               <AlertTriangle className="h-4 w-4 text-warning" aria-hidden="true" />

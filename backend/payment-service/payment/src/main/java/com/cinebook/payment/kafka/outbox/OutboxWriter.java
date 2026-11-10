@@ -35,9 +35,14 @@ public class OutboxWriter {
 
     @Transactional(propagation = Propagation.MANDATORY)
     public UUID write(String topic, UUID aggregateId, String eventType, Object payload) {
+        return write(topic, aggregateId, eventType, payload, 1);
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public UUID write(String topic, UUID aggregateId, String eventType, Object payload, int schemaVersion) {
         UUID eventId = UUID.randomUUID();
         Instant now = Instant.now(clock);
-        EventEnvelope envelope = new EventEnvelope(eventId, eventType, 1, aggregateId, now,
+        EventEnvelope envelope = new EventEnvelope(eventId, eventType, schemaVersion, aggregateId, now,
                 MDC.get("correlationId"), producer, mapper.valueToTree(payload));
         jdbc.update("""
                 INSERT INTO outbox_events (id, topic, aggregate_id, event_type, payload, created_at)

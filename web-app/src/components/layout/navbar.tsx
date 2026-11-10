@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { NotificationBell } from '@/components/layout/notification-bell'
 import { useAuth } from '@/context/auth-context'
 import { cn } from '@/lib/utils'
 
@@ -144,6 +145,8 @@ export function Navbar() {
             </Button>
           )}
 
+          <NotificationBell />
+
           {/* Nút chuyển đổi giao diện Dark / Light */}
           <ThemeToggle />
 
@@ -252,6 +255,8 @@ export function Navbar() {
               <Search className="h-5 w-5" aria-hidden="true" />
             </Link>
           </Button>
+
+          <NotificationBell />
 
           <ThemeToggle />
 

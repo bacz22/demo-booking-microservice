@@ -60,7 +60,7 @@ class BookingEventsConsumerTest {
         UUID bookingId = UUID.randomUUID();
         UUID paymentId = processingPayment(bookingId);
         ConsumerRecord<String, String> record = record("BookingConfirmed", bookingId,
-            new KafkaEvents.BookingConfirmed(bookingId, UUID.randomUUID(), paymentId, AMOUNT, "VND"));
+            new KafkaEvents.BookingConfirmed(bookingId, UUID.randomUUID(), paymentId, AMOUNT, "VND", null));
 
         consumer.onMessage(record);
         consumer.onMessage(record);
@@ -93,7 +93,7 @@ class BookingEventsConsumerTest {
         UUID bookingId = UUID.randomUUID();
         UUID paymentId = processingPayment(bookingId);
         consumer.onMessage(record("BookingConfirmed", bookingId,
-            new KafkaEvents.BookingConfirmed(bookingId, UUID.randomUUID(), paymentId, AMOUNT, "VND")));
+            new KafkaEvents.BookingConfirmed(bookingId, UUID.randomUUID(), paymentId, AMOUNT, "VND", null)));
 
         consumer.onMessage(record("BookingPaymentRejected", bookingId,
             new KafkaEvents.BookingPaymentRejected(bookingId, UUID.randomUUID(), paymentId, "BOOKING_ALREADY_PAID", "x")));
@@ -106,7 +106,7 @@ class BookingEventsConsumerTest {
     void otherBookingEvents_areIgnored() {
         UUID bookingId = UUID.randomUUID();
         consumer.onMessage(record("BookingCancelled", bookingId,
-            new KafkaEvents.BookingCancelled(bookingId, UUID.randomUUID(), "USER_CANCELLED")));
+            new KafkaEvents.BookingCancelled(bookingId, UUID.randomUUID(), "USER_CANCELLED", null)));
 
         assertEquals(0, processedCount());
     }

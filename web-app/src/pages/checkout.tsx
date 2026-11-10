@@ -12,9 +12,11 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import { useAuth } from '@/context/auth-context'
-import { bookingApiService } from '@/services/booking-api.service'
+import { bookingApiService, generateIdempotencyKey } from '@/services/booking-api.service'
+import { paymentApiService, PaymentPollTimeoutError } from '@/services/payment-api.service'
+import { MockGatewayDialog } from '@/components/payment/mock-gateway-dialog'
 import type { BackendBookingResponse } from '@/types/booking'
-import type { PaymentMethodId } from '@/types/payment'
+import type { BackendPaymentResponse, PaymentMethodId } from '@/types/payment'
 
 interface CheckoutLocationState {
   bookingId?: string
@@ -32,6 +34,19 @@ interface CheckoutLocationState {
   total?: number
   format?: string
   ageRating?: string
+}
+
+const REFUND_REASONS: Record<string, string> = {
+  BOOKING_EXPIRED: 'Đơn giữ vé đã hết hạn trước khi thanh toán được xác nhận.',
+  BOOKING_CANCELLED: 'Đơn giữ vé đã bị huỷ trước khi thanh toán được xác nhận.',
+  SHOWTIME_NOT_SELLING: 'Suất chiếu đã ngừng bán vé.',
+  BOOKING_ALREADY_PAID: 'Đơn vé đã được thanh toán bởi giao dịch khác.',
+  PAYMENT_DATA_MISMATCH: 'Số tiền thanh toán không khớp với đơn vé.',
+  BOOKING_NOT_FOUND: 'Không tìm thấy đơn vé.',
+}
+
+function refundReasonText(code: string | null): string {
+  return (code && REFUND_REASONS[code]) || 'Đơn vé không thể xác nhận.'
 }
 
 export default function CheckoutPage() {
@@ -112,7 +127,28 @@ export default function CheckoutPage() {
     document.title = 'Thanh toán vé xem phim | CineBook'
   }, [])
 
-  // Xử lý khi nhấn nút CTA "Thanh toán"
+  // Idempotency-Key cố định cho đơn này: bấm Thanh toán lại sẽ nhận về payment cũ, không tạo trùng
+  const [paymentIdempotencyKey] = useState(() => generateIdempotencyKey())
+  const [payment, setPayment] = useState<BackendPaymentResponse | null>(null)
+  const [isGatewayOpen, setIsGatewayOpen] = useState(false)
+  const [isSubmittingGateway, setIsSubmittingGateway] = useState(false)
+
+  const backToSeats = () =>
+    navigate(state?.showtimeId ? `/booking/${state.showtimeId}/seats` : '/cinemas')
+
+  const goToFailed = (reason: string, extra?: { refunded?: boolean; failureCode?: string | null; message?: string }) =>
+    navigate(`/payment/failed?bookingId=${bookingId}`, {
+      state: {
+        bookingId,
+        movie: bookingData.movieTitle,
+        cinema: bookingData.cinemaName,
+        total: bookingData.total,
+        reason,
+        ...extra,
+      },
+    })
+
+  // Bước 1: tạo payment trên payment-service rồi mở cổng thanh toán giả lập
   const handlePayment = async () => {
     if (isExpired || isProcessing) return
 
@@ -122,56 +158,104 @@ export default function CheckoutPage() {
     }
 
     setIsProcessing(true)
-
     try {
-      // 1. Gọi Booking Service POST /api/bookings/{id}/confirm (Mock Payment)
-      const confirmed = await bookingApiService.confirmBooking(bookingId)
-
-      toast.bookingSuccess({
-        bookingCode: confirmed.bookingCode,
-        movieTitle: bookingData.movieTitle,
-        seats: bookingData.seats,
-      })
-
-      // 2. Điều hướng sang trang thanh toán thành công
-      navigate('/payment/success', {
-        state: {
-          bookingId: confirmed.id,
-          bookingCode: confirmed.bookingCode,
-          movie: bookingData.movieTitle,
-          cinema: bookingData.cinemaName,
-          room: bookingData.roomName,
-          showtime: `${bookingData.showtime} • ${bookingData.date}`,
-          seats: bookingData.seats,
-          total: Number(confirmed.totalAmount) || bookingData.total,
-          paymentMethod,
-        },
-      })
+      const amount = Number(state?.booking?.totalAmount ?? bookingData.total)
+      const created = await paymentApiService.createPayment(
+        { bookingId, amount },
+        paymentIdempotencyKey
+      )
+      setPayment(created)
+      if (paymentApiService.isFinal(created.status) || created.status === 'PROCESSING') {
+        // Payment đã được xử lý trước đó (ví dụ reload trang) → chờ kết quả cuối
+        await awaitResult(created.id)
+        return
+      }
+      setIsGatewayOpen(true)
     } catch (err: any) {
-      console.error('Lỗi xác nhận thanh toán:', err)
-
+      console.error('Lỗi tạo thanh toán:', err)
       if (err?.code === 'BOOKING_EXPIRED') {
         setIsExpired(true)
         toast.error('Đơn giữ vé đã hết hạn giữ chỗ (quá 5 phút). Ghế đã được nhả ra.')
-      } else if (err?.code === 'MOCK_PAYMENT_DISABLED') {
-        toast.error('Tính năng thanh toán thử nghiệm chưa được bật trên máy chủ.')
-      } else if (err?.code === 'SHOWTIME_NOT_SELLING') {
-        toast.error('Suất chiếu này đã ngừng bán vé.')
-        navigate(state?.showtimeId ? `/booking/${state.showtimeId}/seats` : '/cinemas')
+      } else if (err?.code === 'BOOKING_NOT_PAYABLE') {
+        toast.error('Đơn vé không còn ở trạng thái chờ thanh toán.')
+        backToSeats()
+      } else if (err?.code === 'BOOKING_UNAVAILABLE') {
+        toast.error('Hệ thống đặt vé đang bận, vui lòng thử lại sau giây lát.')
       } else {
-        toast.paymentError(err?.message || 'Giao dịch thanh toán không thành công.')
-        navigate('/payment/failed', {
-          state: {
-            bookingId,
-            movie: bookingData.movieTitle,
-            cinema: bookingData.cinemaName,
-            total: bookingData.total,
-            reason: err?.message || 'Giao dịch không thành công hoặc lỗi kết nối cổng thanh toán',
-          },
-        })
+        toast.paymentError(err?.message || 'Không thể khởi tạo giao dịch thanh toán.')
       }
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  // Bước 2: người dùng chọn kết quả trên cổng giả lập
+  const handleGatewayResult = async (success: boolean) => {
+    if (!payment) return
+    setIsSubmittingGateway(true)
+    try {
+      await paymentApiService.completePayment(
+        payment.id,
+        success
+          ? { success: true, providerRef: `MOCK-${Date.now()}` }
+          : { success: false, failureCode: 'CARD_DECLINED', failureMessage: 'Giao dịch bị từ chối bởi cổng thanh toán' }
+      )
+      setIsGatewayOpen(false)
+      setIsProcessing(true)
+      await awaitResult(payment.id)
+    } catch (err: any) {
+      console.error('Lỗi hoàn tất thanh toán:', err)
+      setIsGatewayOpen(false)
+      toast.paymentError(err?.message || 'Giao dịch thanh toán không thành công.')
+    } finally {
+      setIsSubmittingGateway(false)
+      setIsProcessing(false)
+    }
+  }
+
+  // Bước 3: chờ Saga (payment → Kafka → booking → Kafka → payment) cho kết quả cuối
+  const awaitResult = async (paymentId: string) => {
+    try {
+      const result = await paymentApiService.pollUntilFinal(paymentId)
+      setPayment(result)
+
+      if (result.status === 'SUCCEEDED') {
+        const confirmed = await bookingApiService.getBookingById(result.bookingId)
+        toast.bookingSuccess({
+          bookingCode: confirmed.bookingCode,
+          movieTitle: bookingData.movieTitle,
+          seats: bookingData.seats,
+        })
+        navigate(`/payment/success?bookingId=${confirmed.id}`, {
+          state: {
+            bookingId: confirmed.id,
+            bookingCode: confirmed.bookingCode,
+            movie: bookingData.movieTitle,
+            cinema: bookingData.cinemaName,
+            room: bookingData.roomName,
+            showtime: `${bookingData.showtime} • ${bookingData.date}`,
+            seats: bookingData.seats,
+            total: Number(confirmed.totalAmount) || bookingData.total,
+            paymentMethod,
+            paymentCode: result.paymentCode,
+          },
+        })
+      } else if (result.status === 'REFUNDED') {
+        goToFailed(refundReasonText(result.failureCode), {
+          refunded: true,
+          failureCode: result.failureCode,
+          message: 'Thanh toán đã được ghi nhận nhưng đơn vé không thể xác nhận. Số tiền đã được hoàn lại.',
+        })
+      } else {
+        goToFailed(result.failureMessage || 'Giao dịch không thành công', { failureCode: result.failureCode })
+      }
+    } catch (err: any) {
+      if (err instanceof PaymentPollTimeoutError) {
+        toast.info('Thanh toán đang được xác nhận. Vui lòng kiểm tra lại trạng thái vé sau ít phút.')
+        navigate(`/my-bookings/${bookingId}`)
+        return
+      }
+      throw err
     }
   }
 
@@ -449,6 +533,15 @@ export default function CheckoutPage() {
           </div>
         </div>
       </div>
+
+      <MockGatewayDialog
+        isOpen={isGatewayOpen}
+        paymentCode={payment?.paymentCode}
+        amount={Number(payment?.amount ?? bookingData.total)}
+        isSubmitting={isSubmittingGateway}
+        onApprove={() => handleGatewayResult(true)}
+        onDecline={() => handleGatewayResult(false)}
+      />
 
       {/* Modal xác nhận Hủy đơn giữ chỗ với UI hiện đại */}
       <ConfirmDialog
