@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react'
-import {
-  RotateCcw,
-  Database,
-  CheckCircle2,
-} from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import type { AdminPeriod, AdminDashboardData } from '@/types/admin'
-import { getDashboardData } from '@/mocks/admin/dashboard'
+import { loadDashboardData } from '@/lib/admin-dashboard'
 import { AdminPageHeader } from '@/components/admin/common/admin-page-header'
 import { AdminStatCard } from '@/components/admin/common/admin-stat-card'
 import { RevenueTrendChart } from '@/components/admin/dashboard/revenue-trend-chart'
@@ -27,7 +23,7 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     let isCancelled = false
 
-    getDashboardData(period)
+    loadDashboardData(period)
       .then((res) => {
         if (!isCancelled) {
           setData(res)
@@ -55,7 +51,7 @@ export default function AdminDashboardPage() {
   const handleManualRefresh = async () => {
     try {
       setIsRefreshing(true)
-      const res = await getDashboardData(period)
+      const res = await loadDashboardData(period)
       setData(res)
       toast.success('Đã cập nhật số liệu mới nhất!')
     } catch {
@@ -70,7 +66,7 @@ export default function AdminDashboardPage() {
       {/* 1. Page Header with Period Selector & Actions */}
       <AdminPageHeader
         title="Tổng quan Vận hành"
-        description="Giám sát thời gian thực các chỉ số doanh thu, tỷ lệ lấp đầy ghế và các cảnh báo hệ thống Microservices"
+        description="Theo dõi doanh thu, đơn đặt vé, thanh toán và các suất chiếu sắp diễn ra"
         breadcrumbs={[
           { label: 'Admin', href: '/admin' },
           { label: 'Tổng quan' },
@@ -137,24 +133,12 @@ export default function AdminDashboardPage() {
         }
       />
 
-      {/* 2. Mock Data Notice Banner */}
-      <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs text-amber-800 dark:text-amber-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
-        <div className="flex items-center gap-2.5">
-          <Database className="w-4 h-4 text-amber-500 shrink-0" />
-          <div>
-            <span className="font-bold mr-1.5">Chế độ Dữ liệu mẫu (Mock Data):</span>
-            <span>Số liệu doanh thu, sự kiện Kafka và lịch chiếu đang chạy mô phỏng chuẩn kiến trúc microservices.</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 font-mono text-[11px] text-amber-700 dark:text-amber-400">
-          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-          <span>Phiên bản: v1.0.0-rc</span>
-        </div>
-      </div>
-
       {/* 3. Skeleton Loading State or Render Dashboard Modules */}
-      {isLoading || !data ? (
+      {!isLoading && !data ? (
+        <div className="rounded-2xl border border-border/70 bg-card p-10 text-center text-sm text-muted-foreground">
+          Không thể tải dữ liệu dashboard. Hãy kiểm tra kết nối tới máy chủ và bấm "Làm mới".
+        </div>
+      ) : isLoading || !data ? (
         <div className="space-y-6 animate-pulse">
           {/* 4 Stat cards skeleton */}
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -206,7 +190,7 @@ export default function AdminDashboardPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <AdminStatCard kpi={data.kpis.revenue} />
             <AdminStatCard kpi={data.kpis.bookings} />
-            <AdminStatCard kpi={data.kpis.occupancyRate} />
+            <AdminStatCard kpi={data.kpis.seatsSold} />
             <AdminStatCard kpi={data.kpis.paymentSuccessRate} />
           </div>
 

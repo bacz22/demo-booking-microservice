@@ -1,121 +1,89 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ChevronLeft,
   Copy,
   Check,
-  RotateCcw,
   Ban,
   CreditCard,
   Ticket,
-  ChevronDown,
-  ChevronUp,
-  Terminal,
   Activity,
   User,
-  FlaskConical,
-  CheckCircle2,
-  XCircle,
   ExternalLink,
-  ShieldCheck,
+  AlertTriangle,
+  ListOrdered,
 } from 'lucide-react'
-import type { AdminPayment } from '@/types/admin-payment'
 import {
-  getAdminPaymentById,
-  simulatePaymentOutcome,
-  refundAdminPayment,
-} from '@/mocks/admin/payments'
+  adminPaymentApi,
+  adminUserApi,
+  adminBookingApi,
+  type AdminPaymentDetail as AdminPaymentDetailData,
+} from '@/services/admin-api.service'
+import type { BackendAuthUser } from '@/services/auth-api.service'
+import { ApiClientError } from '@/lib/api-client'
+import {
+  PAYMENT_STATUS_LABEL,
+  buildPaymentTimeline,
+  formatDateTime,
+  formatVND,
+  paymentBadgeStatus,
+  shortId,
+} from '@/lib/admin-payment-mapper'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
-import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
+import { PageErrorState } from '@/components/ui/page-error-state'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 export default function AdminPaymentDetail() {
   const { paymentId } = useParams<{ paymentId: string }>()
 
-  const [payment, setPayment] = useState<AdminPayment | null>(null)
+  const [detail, setDetail] = useState<AdminPaymentDetailData | null>(null)
+  const [customer, setCustomer] = useState<BackendAuthUser | null>(null)
+  const [bookingCode, setBookingCode] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
-  // Collapse raw response
-  const [showRawResponse, setShowRawResponse] = useState(true)
-
-  // Refund dialog state
-  const [showRefundDialog, setShowRefundDialog] = useState(false)
-  const [refundReason, setRefundReason] = useState('')
-  const [isRefunding, setIsRefunding] = useState(false)
-
-  // Simulation loading
-  const [isSimulating, setIsSimulating] = useState(false)
-
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!paymentId) return
     setLoading(true)
+    setError(null)
+    setNotFound(false)
     try {
-      const data = getAdminPaymentById(paymentId)
-      setPayment(data)
+      const data = await adminPaymentApi.get(paymentId)
+      setDetail(data)
+      // Thông tin phụ: lỗi thì bỏ qua, không chặn trang
+      const [users, booking] = await Promise.all([
+        adminUserApi.byIds([data.payment.userId]).catch(() => ({}) as Record<string, BackendAuthUser>),
+        adminBookingApi.get(data.payment.bookingId).catch(() => null),
+      ])
+      setCustomer(users[data.payment.userId] ?? null)
+      setBookingCode(booking?.bookingCode ?? null)
     } catch (err) {
       console.error('Failed to load payment detail:', err)
-      toast.error('Không thể tải chi tiết giao dịch thanh toán')
+      if (err instanceof ApiClientError && err.status === 404) setNotFound(true)
+      else setError(err instanceof Error ? err.message : 'Không thể tải chi tiết giao dịch thanh toán')
     } finally {
       setLoading(false)
     }
   }, [paymentId])
 
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const timeline = useMemo(
+    () => (detail ? buildPaymentTimeline(detail.payment, detail.attempts) : []),
+    [detail],
+  )
+
   const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text)
+    void navigator.clipboard.writeText(text)
     setCopiedKey(label)
     toast.success(`Đã sao chép ${label}`)
     setTimeout(() => setCopiedKey(null), 2000)
-  }
-
-  // Refund flow
-  const handleConfirmRefund = () => {
-    if (!payment) return
-    setIsRefunding(true)
-    try {
-      const res = refundAdminPayment(payment.id, refundReason)
-      if (res.success && res.payment) {
-        setPayment(res.payment)
-        toast.success(res.message)
-        setShowRefundDialog(false)
-        setRefundReason('')
-      } else {
-        toast.error(res.message)
-      }
-    } catch {
-      toast.error('Có lỗi xảy ra khi thực hiện hoàn tiền')
-    } finally {
-      setIsRefunding(false)
-    }
-  }
-
-  // Mock / Sandbox simulation
-  const handleSimulate = (outcome: 'SUCCESS' | 'FAILED') => {
-    if (!payment) return
-    setIsSimulating(true)
-    try {
-      const res = simulatePaymentOutcome(payment.id, outcome)
-      if (res.success && res.payment) {
-        setPayment(res.payment)
-        toast.success(res.message)
-      } else {
-        toast.error(res.message)
-      }
-    } catch {
-      toast.error('Có lỗi xảy ra khi mô phỏng kết quả')
-    } finally {
-      setIsSimulating(false)
-    }
-  }
-
-  const formatVND = (amount: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND',
-    }).format(amount)
   }
 
   if (loading) {
@@ -131,7 +99,17 @@ export default function AdminPaymentDetail() {
     )
   }
 
-  if (!payment) {
+  if (error) {
+    return (
+      <PageErrorState
+        title="Không thể tải chi tiết giao dịch"
+        message={error}
+        onRetry={() => void load()}
+      />
+    )
+  }
+
+  if (notFound || !detail) {
     return (
       <div className="rounded-2xl border border-border/80 bg-card/60 p-12 text-center space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
@@ -148,15 +126,10 @@ export default function AdminPaymentDetail() {
     )
   }
 
-  const canRefund = payment.status === 'SUCCESS'
-  const refundDisabledReason =
-    payment.status === 'REFUNDED'
-      ? 'Giao dịch này đã được hoàn tiền thành công'
-      : payment.status === 'PENDING'
-      ? 'Giao dịch đang chờ thanh toán, chưa trừ tiền'
-      : payment.status === 'FAILED'
-      ? 'Giao dịch đã thất bại, không có khoản tiền để hoàn'
-      : undefined
+  const payment = detail.payment
+  const attempts = [...detail.attempts].sort((a, b) => a.attemptNumber - b.attemptNumber)
+  const bookingLabel = bookingCode ?? shortId(payment.bookingId)
+  const hasFailure = Boolean(payment.failureCode || payment.failureMessage)
 
   return (
     <div className="space-y-6">
@@ -177,7 +150,7 @@ export default function AdminPaymentDetail() {
             </Button>
             <span className="text-muted-foreground">•</span>
             <span className="text-xs text-muted-foreground font-mono">
-              Tạo lúc: {payment.createdAt}
+              Tạo lúc: {formatDateTime(payment.createdAt)}
             </span>
           </div>
 
@@ -185,12 +158,12 @@ export default function AdminPaymentDetail() {
             <h1 className="text-xl sm:text-2xl font-black font-heading tracking-tight text-foreground flex items-center gap-2">
               <CreditCard className="w-6 h-6 text-primary" />
               <span>Giao Dịch:</span>
-              <span className="font-mono text-primary font-bold">{payment.id}</span>
+              <span className="font-mono text-primary font-bold">{payment.paymentCode}</span>
             </h1>
 
             <button
               type="button"
-              onClick={() => copyToClipboard(payment.id, 'Mã giao dịch')}
+              onClick={() => copyToClipboard(payment.paymentCode, 'Mã giao dịch')}
               className="p-1.5 rounded-lg border border-border/80 bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               title="Sao chép mã giao dịch"
             >
@@ -201,100 +174,55 @@ export default function AdminPaymentDetail() {
               )}
             </button>
 
-            <AdminStatusBadge status={payment.status} size="md" />
+            <AdminStatusBadge
+              status={paymentBadgeStatus(payment.status)}
+              label={PAYMENT_STATUS_LABEL[payment.status]}
+              size="md"
+            />
           </div>
         </div>
 
-        {/* Top Actions: Link to Booking & Refund Button */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {payment.bookingId && (
-            <Button
-              asChild
-              variant="outline"
-              size="sm"
-              className="h-9 gap-1.5 rounded-xl border-border/80 font-bold hover:bg-secondary cursor-pointer"
-            >
-              <Link to={`/admin/bookings/${payment.bookingId}`}>
-                <Ticket className="w-4 h-4 text-primary" />
-                <span>Đơn {payment.bookingCode}</span>
-                <ExternalLink className="w-3 h-3 text-muted-foreground ml-0.5" />
-              </Link>
-            </Button>
-          )}
-
-          {/* Refund Action Button */}
-          <div className="relative group">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canRefund}
-              onClick={() => setShowRefundDialog(true)}
-              className="h-9 gap-1.5 rounded-xl border-indigo-500/30 text-indigo-400 bg-indigo-500/10 hover:bg-indigo-500/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Hoàn tiền giao dịch</span>
-            </Button>
-            {!canRefund && refundDisabledReason && (
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block z-20 w-64 p-2 rounded-xl bg-popover border border-border/80 text-[11px] text-muted-foreground shadow-xl">
-                {refundDisabledReason}
-              </div>
-            )}
-          </div>
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 rounded-xl border-border/80 font-bold hover:bg-secondary cursor-pointer"
+          >
+            <Link to={`/admin/bookings/${payment.bookingId}`}>
+              <Ticket className="w-4 h-4 text-primary" />
+              <span>Đơn {bookingLabel}</span>
+              <ExternalLink className="w-3 h-3 text-muted-foreground ml-0.5" />
+            </Link>
+          </Button>
         </div>
       </div>
 
-      {/* Mock Sandbox Alert Banner per prompt.txt (simulate success/failure in local/mock env) */}
-      {payment.status === 'PENDING' && (
-        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 backdrop-blur-md">
-          <div className="flex items-start gap-3">
-            <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
-              <FlaskConical className="w-5 h-5" />
+      {/* Failure / refund reason */}
+      {hasFailure && (
+        <div
+          className={cn(
+            'rounded-2xl border p-4 flex items-start gap-3 backdrop-blur-md',
+            payment.status === 'REFUNDED'
+              ? 'border-indigo-500/30 bg-indigo-500/10'
+              : 'border-rose-500/30 bg-rose-500/10',
+          )}
+        >
+          <AlertTriangle
+            className={cn('w-5 h-5 shrink-0', payment.status === 'REFUNDED' ? 'text-indigo-400' : 'text-rose-400')}
+          />
+          <div className="space-y-0.5 text-xs">
+            <div className="font-bold uppercase tracking-wider text-foreground">
+              {payment.status === 'REFUNDED' ? 'Lý do hoàn tiền' : 'Lý do thất bại'}
+              {payment.failureCode && <span className="ml-2 font-mono">{payment.failureCode}</span>}
             </div>
-            <div className="space-y-0.5">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                  Mock / Local Sandbox Tool
-                </span>
-                <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-300">
-                  Môi trường thử nghiệm
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Giao dịch này đang ở trạng thái <strong className="text-amber-300">PENDING</strong>. Bạn có thể giả lập Webhook phản hồi từ cổng thanh toán để kiểm thử quy trình microservices.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
-            <Button
-              type="button"
-              size="sm"
-              disabled={isSimulating}
-              onClick={() => handleSimulate('FAILED')}
-              className="h-8 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/30 text-xs font-bold gap-1 cursor-pointer"
-            >
-              <XCircle className="w-3.5 h-3.5" />
-              <span>Simulate Thất bại</span>
-            </Button>
-
-            <Button
-              type="button"
-              size="sm"
-              disabled={isSimulating}
-              onClick={() => handleSimulate('SUCCESS')}
-              className="h-8 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold gap-1 cursor-pointer"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Simulate Thành công</span>
-            </Button>
+            {payment.failureMessage && <p className="text-muted-foreground">{payment.failureMessage}</p>}
           </div>
         </div>
       )}
 
       {/* Main Grid Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT: Summary Card & Raw Response (7 cols) */}
         <div className="lg:col-span-7 space-y-6">
           {/* Payment Summary Box */}
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
@@ -303,9 +231,7 @@ export default function AdminPaymentDetail() {
                 <CreditCard className="w-4 h-4 text-primary" />
                 <span>Thông tin đối soát thanh toán</span>
               </h2>
-              <span className="text-xs font-mono font-bold text-foreground">
-                {payment.method}
-              </span>
+              <span className="text-xs font-mono font-bold text-foreground">{payment.method}</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
@@ -314,129 +240,107 @@ export default function AdminPaymentDetail() {
                 <span className="font-mono font-black text-xl text-foreground tabular-nums block">
                   {formatVND(payment.amount)}
                 </span>
-                <span className="text-[11px] text-muted-foreground">
-                  Đơn vị tính: {payment.currency}
-                </span>
+                <span className="text-[11px] text-muted-foreground">Đơn vị tính: {payment.currency}</span>
               </div>
 
               <div className="p-3.5 rounded-xl bg-secondary/30 border border-border/50 space-y-1">
                 <span className="text-muted-foreground block text-[11px]">Mã đối soát cổng (Provider Ref):</span>
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono font-bold text-primary text-sm truncate">
-                    {payment.providerRef}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(payment.providerRef, 'Provider Ref')}
-                    className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                    title="Sao chép mã đối soát"
-                  >
-                    {copiedKey === 'Provider Ref' ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
-                    )}
-                  </button>
-                </div>
-                {payment.bankCode && (
-                  <span className="text-[11px] text-muted-foreground block">
-                    Ngân hàng: <strong>{payment.bankCode}</strong>
-                  </span>
+                {payment.providerRef ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-bold text-primary text-sm truncate">{payment.providerRef}</span>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(payment.providerRef ?? '', 'Provider Ref')}
+                      className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="Sao chép mã đối soát"
+                    >
+                      {copiedKey === 'Provider Ref' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <span className="font-mono text-muted-foreground block">Chưa có</span>
                 )}
               </div>
             </div>
 
-            {/* Additional Info Table */}
             <div className="space-y-2 text-xs border-t border-border/60 pt-3">
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Đơn đặt vé liên kết:</span>
-                <Link
-                  to={`/admin/bookings/${payment.bookingId}`}
-                  className="font-mono font-bold text-primary hover:underline"
-                >
-                  {payment.bookingCode}
-                </Link>
-              </div>
-
-              <div className="flex justify-between py-1 border-b border-border/40">
-                <span className="text-muted-foreground">Thời gian trừ tiền (Paid at):</span>
-                <span className="font-mono text-foreground">
-                  {payment.paidAt || 'Chưa ghi nhận'}
-                </span>
-              </div>
-
-              {payment.refundedAt && (
-                <div className="flex justify-between py-1 border-b border-border/40 text-indigo-400">
-                  <span>Thời gian hoàn tiền:</span>
-                  <span className="font-mono">{payment.refundedAt}</span>
+              {[
+                ['Đơn đặt vé liên kết:', null],
+                ['Mã nội bộ (Payment ID):', payment.id],
+                ['Hạn giữ chỗ của đơn:', formatDateTime(payment.bookingExpiresAt)],
+                ['Thời gian thanh toán (Paid at):', payment.paidAt ? formatDateTime(payment.paidAt) : 'Chưa ghi nhận'],
+                ['Thời gian thất bại / hoàn (Failed at):', formatDateTime(payment.failedAt)],
+                ['Cập nhật lần cuối:', formatDateTime(payment.updatedAt)],
+              ].map(([label, value]) => (
+                <div key={label} className="flex justify-between gap-3 py-1 border-b border-border/40 last:border-0">
+                  <span className="text-muted-foreground">{label}</span>
+                  {value === null ? (
+                    <Link
+                      to={`/admin/bookings/${payment.bookingId}`}
+                      className="font-mono font-bold text-primary hover:underline"
+                      title={payment.bookingId}
+                    >
+                      {bookingLabel}
+                    </Link>
+                  ) : (
+                    <span className="font-mono text-foreground text-right break-all">{value}</span>
+                  )}
                 </div>
-              )}
-
-              {payment.refundReason && (
-                <div className="flex justify-between py-1 text-indigo-400">
-                  <span>Lý do hoàn tiền:</span>
-                  <span className="italic">{payment.refundReason}</span>
-                </div>
-              )}
+              ))}
             </div>
           </div>
 
-          {/* Raw Response JSON Viewer (Collapsible & Redacted per prompt.txt) */}
+          {/* Attempts */}
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md shadow-xs overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowRawResponse(!showRawResponse)}
-              className="w-full p-4 flex items-center justify-between text-left hover:bg-secondary/20 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Dữ liệu phản hồi gốc (Raw Gateway Response — Redacted)
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Đã bảo mật dữ liệu thẻ</span>
-                </span>
-                {showRawResponse ? (
-                  <ChevronUp className="w-4 h-4 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
-                )}
-              </div>
-            </button>
-
-            {showRawResponse && (
-              <div className="p-4 pt-0 border-t border-border/60 bg-secondary/10 space-y-2">
-                <div className="flex justify-between items-center pt-2">
-                  <span className="text-[11px] text-muted-foreground font-mono">
-                    JSON Content ({Object.keys(payment.rawResponse).length} fields)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      copyToClipboard(
-                        JSON.stringify(payment.rawResponse, null, 2),
-                        'Raw JSON Response'
-                      )
-                    }
-                    className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline cursor-pointer"
-                  >
-                    <Copy className="w-3 h-3" />
-                    <span>Sao chép JSON</span>
-                  </button>
-                </div>
-
-                <pre className="p-3.5 rounded-xl bg-background/80 border border-border/80 font-mono text-[11px] text-foreground overflow-x-auto leading-relaxed shadow-inner">
-                  {JSON.stringify(payment.rawResponse, null, 2)}
-                </pre>
+            <div className="p-4 flex items-center justify-between border-b border-border/60">
+              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                <ListOrdered className="w-4 h-4 text-primary" />
+                <span>Các lần thử thanh toán</span>
+              </h2>
+              <span className="text-xs text-muted-foreground font-mono">{attempts.length} lần</span>
+            </div>
+            {attempts.length === 0 ? (
+              <p className="p-4 text-xs text-muted-foreground">Chưa có lần thử thanh toán nào.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-secondary/30 text-muted-foreground uppercase text-[11px]">
+                      <th className="py-2.5 pl-4 pr-2">#</th>
+                      <th className="py-2.5 px-2">Trạng thái</th>
+                      <th className="py-2.5 px-2">Provider Ref</th>
+                      <th className="py-2.5 px-2">Bắt đầu</th>
+                      <th className="py-2.5 px-2 pr-4">Kết thúc</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {attempts.map((a) => (
+                      <tr key={a.id} className="align-top">
+                        <td className="py-2.5 pl-4 pr-2 font-mono font-bold">{a.attemptNumber}</td>
+                        <td className="py-2.5 px-2">
+                          <span className="font-mono font-bold">{a.status}</span>
+                          {(a.failureCode || a.failureMessage) && (
+                            <div className="text-[11px] text-rose-400">
+                              {[a.failureCode, a.failureMessage].filter(Boolean).join(' — ')}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-2 font-mono text-muted-foreground">{a.providerRef ?? '—'}</td>
+                        <td className="py-2.5 px-2 font-mono text-muted-foreground">{formatDateTime(a.startedAt)}</td>
+                        <td className="py-2.5 px-2 pr-4 font-mono text-muted-foreground">{formatDateTime(a.endedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>
         </div>
 
-        {/* RIGHT: Customer & Transaction Timeline (5 cols) */}
         <div className="lg:col-span-5 space-y-6">
           {/* Customer Card */}
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
@@ -445,104 +349,76 @@ export default function AdminPaymentDetail() {
               <span>Người thực hiện thanh toán</span>
             </h2>
 
-            <div className="flex items-center gap-3.5">
-              <div className="w-11 h-11 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center font-black font-heading text-primary text-sm shrink-0">
-                {payment.customer.fullName.charAt(0)}
-              </div>
-              <div className="space-y-0.5 min-w-0">
-                <div className="font-bold text-foreground text-sm truncate">
-                  {payment.customer.fullName}
+            {customer ? (
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center font-black font-heading text-primary text-sm shrink-0">
+                  {customer.fullName.charAt(0)}
                 </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {payment.customer.email}
-                </div>
-                <div className="text-xs text-muted-foreground font-mono">
-                  {payment.customer.phone}
+                <div className="space-y-0.5 min-w-0">
+                  <div className="font-bold text-foreground text-sm truncate">{customer.fullName}</div>
+                  <div className="text-xs text-muted-foreground truncate">{customer.email}</div>
+                  {customer.phone && <div className="text-xs text-muted-foreground font-mono">{customer.phone}</div>}
                 </div>
               </div>
-            </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Không tải được thông tin khách hàng. User ID:{' '}
+                <span className="font-mono text-foreground break-all">{payment.userId}</span>
+              </p>
+            )}
           </div>
 
-          {/* Transaction Timeline per prompt.txt */}
+          {/* Timeline */}
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <Activity className="w-4 h-4 text-emerald-400" />
-                <span>Tiến trình xử lý (Transaction Timeline)</span>
+                <span>Tiến trình xử lý</span>
               </h2>
-              <span className="text-xs text-muted-foreground font-mono">
-                {payment.timeline.length} mốc
-              </span>
+              <span className="text-xs text-muted-foreground font-mono">{timeline.length} mốc</span>
             </div>
 
             <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/80">
-              {payment.timeline.map((event, index) => {
-                const isLatest = index === payment.timeline.length - 1
-
+              {timeline.map((event) => {
+                const color =
+                  event.tone === 'success'
+                    ? 'emerald'
+                    : event.tone === 'danger'
+                      ? 'rose'
+                      : event.tone === 'warning'
+                        ? 'indigo'
+                        : event.tone === 'info'
+                          ? 'primary'
+                          : 'muted'
                 return (
                   <div key={event.id} className="relative space-y-1">
-                    {/* Event Dot */}
                     <div
                       className={cn(
                         'absolute -left-6 top-1 w-5 h-5 rounded-full border-2 flex items-center justify-center bg-card',
-                        event.step === 'SUCCESS'
-                          ? 'border-emerald-500 text-emerald-500'
-                          : event.step === 'FAILED'
-                          ? 'border-rose-500 text-rose-500'
-                          : event.step === 'REFUNDED'
-                          ? 'border-indigo-500 text-indigo-500'
-                          : isLatest
-                          ? 'border-primary text-primary'
-                          : 'border-muted-foreground/40 text-muted-foreground'
+                        color === 'emerald' && 'border-emerald-500',
+                        color === 'rose' && 'border-rose-500',
+                        color === 'indigo' && 'border-indigo-500',
+                        color === 'primary' && 'border-primary',
+                        color === 'muted' && 'border-muted-foreground/40',
                       )}
                     >
                       <div
                         className={cn(
                           'w-2 h-2 rounded-full',
-                          event.step === 'SUCCESS'
-                            ? 'bg-emerald-500'
-                            : event.step === 'FAILED'
-                            ? 'bg-rose-500'
-                            : event.step === 'REFUNDED'
-                            ? 'bg-indigo-500'
-                            : 'bg-primary'
+                          color === 'emerald' && 'bg-emerald-500',
+                          color === 'rose' && 'bg-rose-500',
+                          color === 'indigo' && 'bg-indigo-500',
+                          (color === 'primary' || color === 'muted') && 'bg-primary',
                         )}
                       />
                     </div>
-
-                    {/* Event Header */}
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-foreground">{event.title}</span>
-                        <span
-                          className={cn(
-                            'text-[10px] px-1.5 py-0.2 rounded font-mono font-bold uppercase',
-                            event.actor === 'USER'
-                              ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
-                              : event.actor === 'ADMIN'
-                              ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
-                              : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          )}
-                        >
-                          {event.actor}
-                        </span>
-                      </div>
-
+                      <span className="text-xs font-bold text-foreground">{event.title}</span>
                       <span className="text-[11px] font-mono text-muted-foreground">
-                        {event.timestamp}
+                        {formatDateTime(event.timestamp)}
                       </span>
                     </div>
-
-                    {/* Description */}
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {event.description}
-                    </p>
-
-                    {event.responseCode && (
-                      <div className="text-[10px] font-mono text-muted-foreground">
-                        Response Code: <strong className="text-foreground">{event.responseCode}</strong>
-                      </div>
-                    )}
+                    <p className="text-xs text-muted-foreground leading-relaxed break-words">{event.description}</p>
                   </div>
                 )
               })}
@@ -550,24 +426,6 @@ export default function AdminPaymentDetail() {
           </div>
         </div>
       </div>
-
-      {/* Confirm Refund Dialog */}
-      <AdminConfirmDialog
-        isOpen={showRefundDialog}
-        title="Xác nhận hoàn tiền giao dịch"
-        targetName={payment.id}
-        description={`Bạn chuẩn bị kích hoạt lệnh hoàn tiền ${formatVND(payment.amount)} cho khách hàng "${payment.customer.fullName}".`}
-        consequenceWarning="Lệnh hoàn tiền sẽ được gửi tới cổng thanh toán tương ứng và không thể đảo ngược. Đơn đặt vé liên quan sẽ được chuyển trạng thái sang REFUNDED."
-        confirmText="Xác nhận hoàn tiền"
-        cancelText="Đóng"
-        variant="warning"
-        isLoading={isRefunding}
-        onConfirm={handleConfirmRefund}
-        onCancel={() => {
-          setShowRefundDialog(false)
-          setRefundReason('')
-        }}
-      />
     </div>
   )
 }

@@ -65,6 +65,28 @@ public class Booking {
     @Column(name = "cancel_reason", length = 255)
     private String cancelReason;
 
+    // Snapshot hiển thị lúc giữ ghế (null với booking cũ chưa backfill)
+    @Column(name = "movie_title", length = 255)
+    private String movieTitle;
+
+    @Column(name = "poster_url", length = 1000)
+    private String posterUrl;
+
+    @Column(name = "theater_name", length = 255)
+    private String theaterName;
+
+    @Column(name = "theater_city", length = 100)
+    private String theaterCity;
+
+    @Column(name = "auditorium_name", length = 100)
+    private String auditoriumName;
+
+    @Column(name = "showtime_start")
+    private Instant showtimeStart;
+
+    @Column(name = "showtime_end")
+    private Instant showtimeEnd;
+
     @Version
     private long version;
 
@@ -94,6 +116,17 @@ public class Booking {
         this.expiresAt = expiresAt;
         this.createdAt = now;
         this.updatedAt = now;
+    }
+
+    public void applySnapshot(BookingSnapshot snapshot) {
+        if (snapshot == null) return;
+        this.movieTitle = snapshot.movieTitle();
+        this.posterUrl = snapshot.posterUrl();
+        this.theaterName = snapshot.theaterName();
+        this.theaterCity = snapshot.theaterCity();
+        this.auditoriumName = snapshot.auditoriumName();
+        this.showtimeStart = snapshot.showtimeStart();
+        this.showtimeEnd = snapshot.showtimeEnd();
     }
 
     public void confirm(Instant now) {
@@ -137,4 +170,11 @@ public class Booking {
     public String getCancelReason() { return cancelReason; }
     public Instant getCreatedAt() { return createdAt; }
     public Instant getUpdatedAt() { return updatedAt; }
+    public String getMovieTitle() { return movieTitle; }
+    public String getPosterUrl() { return posterUrl; }
+    public String getTheaterName() { return theaterName; }
+    public String getTheaterCity() { return theaterCity; }
+    public String getAuditoriumName() { return auditoriumName; }
+    public Instant getShowtimeStart() { return showtimeStart; }
+    public Instant getShowtimeEnd() { return showtimeEnd; }
 }

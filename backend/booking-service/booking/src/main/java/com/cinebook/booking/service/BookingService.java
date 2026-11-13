@@ -1,5 +1,8 @@
 package com.cinebook.booking.service;
 
+import com.cinebook.booking.client.MovieServiceClient;
+import com.cinebook.booking.client.dto.MovieSummaryDto;
+import com.cinebook.booking.domain.entity.BookingSnapshot;
 import com.cinebook.booking.client.TheaterServiceClient;
 import com.cinebook.booking.client.dto.TheaterSeatDto;
 import com.cinebook.booking.client.dto.TheaterSeatMapDto;
@@ -47,6 +50,7 @@ public class BookingService {
     private static final Logger log = LoggerFactory.getLogger(BookingService.class);
     private final BookingPersistenceService persistence;
     private final TheaterServiceClient theater;
+    private final MovieServiceClient movies;
     private final RedisSeatHoldRepository seatHolds;
     private final RedisIdempotencyRepository idempotency;
     private final BookingMetrics metrics;
@@ -56,13 +60,14 @@ public class BookingService {
     private final boolean mockPaymentEnabled;
 
     public BookingService(BookingPersistenceService persistence, TheaterServiceClient theater,
-                          RedisSeatHoldRepository seatHolds, RedisIdempotencyRepository idempotency,
+                          MovieServiceClient movies, RedisSeatHoldRepository seatHolds, RedisIdempotencyRepository idempotency,
                           BookingMetrics metrics, Clock clock,
                           @Value("${booking.max-seats-per-booking:8}") int maxSeats,
                           @Value("${booking.hold-ttl-seconds:300}") int holdTtlSeconds,
                           @Value("${booking.mock-payment-enabled:false}") boolean mockPaymentEnabled) {
         this.persistence = persistence;
         this.theater = theater;
+        this.movies = movies;
         this.seatHolds = seatHolds;
         this.idempotency = idempotency;
         this.metrics = metrics;
@@ -99,6 +104,7 @@ public class BookingService {
             }
             TheaterShowtimeDto showtime = theater.getShowtime(request.showtimeId());
             if (!"SELLING".equalsIgnoreCase(showtime.status())) throw new ShowtimeNotSellingException();
+            BookingSnapshot snapshot = snapshot(showtime); // gọi movie-service trước khi giữ ghế trên Redis
             TheaterSeatMapDto seatMap = theater.getSeatMap(request.showtimeId());
             Map<UUID, TheaterSeatDto> available = new HashMap<>();
             for (TheaterSeatDto seat : seatMap.seats()) available.put(seat.id(), seat);
@@ -111,7 +117,7 @@ public class BookingService {
             Instant now = Instant.now(clock);
             Booking booking = persistence.create(new PersistBookingCommand(requestId, hash, userId,
                 request.showtimeId(), showtime.movieId(), showtime.theaterId(), showtime.auditoriumId(),
-                total, now.plusSeconds(holdTtlSeconds), selected, prices));
+                total, now.plusSeconds(holdTtlSeconds), selected, prices, snapshot));
             holdAcquired = false; // Hold belongs to the committed booking and is released on confirm/cancel/expiry.
             metrics.increment("booking.hold.success");
             return new HoldResult(response(booking), true);
@@ -177,6 +183,17 @@ public class BookingService {
         return response(result.booking());
     }
 
+    /**
+     * Admin huỷ đơn đang chờ thanh toán. Đơn đã CONFIRMED (đã thu tiền) không huỷ ở đây
+     * vì cần luồng hoàn tiền riêng.
+     */
+    public BookingResponse adminCancel(UUID id, String reason) {
+        String note = reason == null || reason.isBlank() ? "ADMIN_CANCELLED" : "ADMIN_CANCELLED: " + reason.trim();
+        TransitionResult result = persistence.cancel(id, null, note.length() > 255 ? note.substring(0, 255) : note);
+        safeRelease(result, result.booking().getUserId());
+        return response(result.booking());
+    }
+
     private BookingResponse response(Booking booking) {
         return BookingResponse.from(booking, persistence.getSeats(booking.getId()));
     }
@@ -232,5 +249,12 @@ public class BookingService {
             current = current.getCause();
         }
         return null;
+    }
+
+    private BookingSnapshot snapshot(TheaterShowtimeDto showtime) {
+        var movie = movies.findMovie(showtime.movieId());
+        return new BookingSnapshot(movie.map(MovieSummaryDto::title).orElse(null),
+            movie.map(MovieSummaryDto::posterUrl).orElse(null), showtime.theaterName(), showtime.theaterCity(),
+            showtime.auditoriumName(), showtime.startTime(), showtime.endTime());
     }
 }

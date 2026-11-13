@@ -37,4 +37,10 @@ public class RefreshTokenRepository {
             """, UUID.class, Timestamp.from(now), tokenHash, Timestamp.from(now));
         return ids.stream().findFirst();
     }
+
+    /** Thu hồi mọi phiên của user (khi bị khoá hoặc đổi mật khẩu). */
+    public int revokeAllForUser(UUID userId, Instant now) {
+        return jdbc.update("UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            Timestamp.from(now), userId);
+    }
 }

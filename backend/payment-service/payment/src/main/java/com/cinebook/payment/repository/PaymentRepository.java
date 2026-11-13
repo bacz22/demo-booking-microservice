@@ -8,7 +8,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 import java.util.UUID;
 
-public interface PaymentRepository extends JpaRepository<Payment, UUID> {
+public interface PaymentRepository extends JpaRepository<Payment, UUID>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<Payment> {
     Optional<Payment> findByRequestId(UUID requestId);
     Optional<Payment> findByBookingId(UUID bookingId);
     Page<Payment> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);

@@ -163,7 +163,7 @@ class PaymentEventsConsumerTest {
         TheaterSeatDto seat = new TheaterSeatDto(seatId, UUID.randomUUID(), "A", 1, "STANDARD", "A1");
         return persistence.create(new PersistBookingCommand(UUID.randomUUID(), "hash-" + UUID.randomUUID(),
             UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
-            PRICE, Instant.now().plus(5, ChronoUnit.MINUTES), List.of(seat), List.of(PRICE)));
+            PRICE, Instant.now().plus(5, ChronoUnit.MINUTES), List.of(seat), List.of(PRICE), null));
     }
 
     private void persistenceCancel(Booking booking) {

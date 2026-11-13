@@ -1,5 +1,7 @@
 booking:
   mock-payment-enabled: true
+  snapshot-backfill:
+    enabled: false
   expiration:
     enabled: false
 

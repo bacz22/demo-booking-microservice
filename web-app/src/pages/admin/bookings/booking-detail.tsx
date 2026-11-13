@@ -1,126 +1,133 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
+import { ChevronLeft, Copy, Check, Ban, User, Film, CreditCard, Ticket, Activity } from 'lucide-react'
+import type { BackendBookingResponse } from '@/types/booking'
+import type { BackendPaymentResponse } from '@/types/payment'
+import type { BackendAuthUser } from '@/services/auth-api.service'
+import { adminBookingApi, adminPaymentApi, adminUserApi } from '@/services/admin-api.service'
+import { ApiClientError } from '@/lib/api-client'
 import {
-  ChevronLeft,
-  Copy,
-  Check,
-  RotateCcw,
-  Ban,
-  User,
-  Film,
-  CreditCard,
-  Ticket,
-  ChevronDown,
-  ChevronUp,
-  Terminal,
-  Activity,
-} from 'lucide-react'
-import type { AdminBooking } from '@/types/admin-booking'
-import {
-  getAdminBookingById,
-  cancelAdminBooking,
-  requestRefundBooking,
-} from '@/mocks/admin/bookings'
+  EMPTY,
+  buildTimeline,
+  derivePaymentDisplay,
+  formatDate,
+  formatDateTime,
+  formatTime,
+  formatVND,
+  initials,
+  seatLabel,
+  seatTypeClass,
+  seatTypeLabel,
+} from '@/lib/admin-booking-mapper'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
+import { PageErrorState } from '@/components/ui/page-error-state'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+
+const PAYMENT_STATUS_LABEL: Record<string, string> = {
+  PENDING: 'Chờ thanh toán',
+  PROCESSING: 'Đang xử lý',
+  SUCCEEDED: 'Thành công',
+  FAILED: 'Thất bại',
+  REFUNDED: 'Đã hoàn tiền',
+}
+
+const TONE_CLASS = {
+  info: 'bg-sky-400',
+  success: 'bg-emerald-400',
+  danger: 'bg-rose-400',
+  muted: 'bg-zinc-400',
+} as const
+
+function Section({ icon: Icon, title, children }: { icon: typeof User; title: string; children: React.ReactNode }) {
+  return (
+    <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
+      <div className="flex items-center gap-2 text-sm font-bold text-foreground">
+        <Icon className="w-4 h-4 text-primary" />
+        <span>{title}</span>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Row({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-start justify-between gap-4 text-xs">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span className={cn('text-foreground font-semibold text-right break-all', mono && 'font-mono')}>{value}</span>
+    </div>
+  )
+}
 
 export default function AdminBookingDetail() {
   const { bookingId } = useParams<{ bookingId: string }>()
 
-  const [booking, setBooking] = useState<AdminBooking | null>(null)
+  const [booking, setBooking] = useState<BackendBookingResponse | null>(null)
+  const [customer, setCustomer] = useState<BackendAuthUser | null>(null)
+  const [payments, setPayments] = useState<BackendPaymentResponse[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<{ notFound: boolean; message: string } | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
-  // Technical metadata collapse state
-  const [showMetadata, setShowMetadata] = useState(true)
-
-  // Actions dialog states
   const [showCancelDialog, setShowCancelDialog] = useState(false)
-  const [cancelReason, setCancelReason] = useState('')
   const [isCancelling, setIsCancelling] = useState(false)
 
-  const [showRefundDialog, setShowRefundDialog] = useState(false)
-  const [refundReason, setRefundReason] = useState('')
-  const [isRefunding, setIsRefunding] = useState(false)
-
-  useEffect(() => {
+  const load = useCallback(async () => {
     if (!bookingId) return
     setLoading(true)
+    setError(null)
     try {
-      const data = getAdminBookingById(bookingId)
+      const data = await adminBookingApi.get(bookingId)
       setBooking(data)
+      const [users, paymentPage] = await Promise.all([
+        adminUserApi.byIds([data.userId]).catch(() => ({}) as Record<string, BackendAuthUser>),
+        adminPaymentApi.list({ bookingId: data.id, pageSize: 20 }).catch(() => null),
+      ])
+      setCustomer(users[data.userId] ?? null)
+      setPayments(paymentPage?.items ?? [])
     } catch (err) {
       console.error('Failed to load booking detail:', err)
-      toast.error('Không thể tải thông tin đơn đặt vé')
+      setBooking(null)
+      setError({
+        notFound: err instanceof ApiClientError && err.status === 404,
+        message: err instanceof Error ? err.message : 'Không thể tải thông tin đơn đặt vé',
+      })
     } finally {
       setLoading(false)
     }
   }, [bookingId])
 
+  useEffect(() => {
+    void load()
+  }, [load])
+
   const copyToClipboard = (text: string, keyName: string) => {
-    navigator.clipboard.writeText(text)
+    void navigator.clipboard.writeText(text)
     setCopiedKey(keyName)
     toast.success(`Đã sao chép ${keyName}`)
     setTimeout(() => setCopiedKey(null), 2000)
   }
 
-  const handleCancelBooking = () => {
+  const handleCancelBooking = async () => {
     if (!booking) return
     setIsCancelling(true)
     try {
-      const res = cancelAdminBooking(booking.id, cancelReason)
-      if (res.success && res.booking) {
-        setBooking(res.booking)
-        toast.success(res.message)
-        setShowCancelDialog(false)
-        setCancelReason('')
+      const updated = await adminBookingApi.cancel(booking.id, 'Quản trị viên huỷ đơn')
+      setBooking(updated)
+      toast.success(`Đã huỷ đơn ${booking.bookingCode}`)
+      setShowCancelDialog(false)
+    } catch (err) {
+      if (err instanceof ApiClientError && (err.status === 409 || err.code === 'INVALID_BOOKING_STATE')) {
+        toast.error('Đơn đã thanh toán hoặc đã kết thúc, không thể huỷ tại đây')
+        void load()
       } else {
-        toast.error(res.message)
+        toast.error('Có lỗi xảy ra khi huỷ đơn')
       }
-    } catch {
-      toast.error('Có lỗi xảy ra khi hủy vé')
     } finally {
       setIsCancelling(false)
-    }
-  }
-
-  const handleRefundBooking = () => {
-    if (!booking) return
-    setIsRefunding(true)
-    try {
-      const res = requestRefundBooking(booking.id, refundReason)
-      if (res.success && res.booking) {
-        setBooking(res.booking)
-        toast.success(res.message)
-        setShowRefundDialog(false)
-        setRefundReason('')
-      } else {
-        toast.error(res.message)
-      }
-    } catch {
-      toast.error('Có lỗi xảy ra khi tạo yêu cầu hoàn tiền')
-    } finally {
-      setIsRefunding(false)
-    }
-  }
-
-  const formatVND = (amount: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND',
-    }).format(amount)
-  }
-
-  const formatDate = (dateStr: string) => {
-    try {
-      const [year, month, day] = dateStr.split('-')
-      return `${day}/${month}/${year}`
-    } catch {
-      return dateStr
     }
   }
 
@@ -138,6 +145,15 @@ export default function AdminBookingDetail() {
   }
 
   if (!booking) {
+    if (error && !error.notFound) {
+      return (
+        <PageErrorState
+          title="Không thể tải đơn đặt vé"
+          message={error.message}
+          onRetry={() => void load()}
+        />
+      )
+    }
     return (
       <div className="rounded-2xl border border-border/80 bg-card/60 p-12 text-center space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
@@ -154,546 +170,207 @@ export default function AdminBookingDetail() {
     )
   }
 
-  // State guards for action buttons per prompt.txt
-  const canCancel = booking.status === 'CONFIRMED' || booking.status === 'PENDING_PAYMENT'
-  const canRefund = booking.payment.status === 'SUCCESS' && booking.status === 'CONFIRMED'
-
+  const canCancel = booking.status === 'PENDING_PAYMENT'
   const cancelDisabledReason =
-    booking.status === 'CANCELLED'
+    booking.status === 'CONFIRMED'
+      ? 'Đơn đã thanh toán, không thể huỷ tại đây'
+      : booking.status === 'CANCELLED'
       ? 'Đơn đặt vé này đã bị hủy trước đó'
-      : booking.status === 'REFUNDED'
-      ? 'Đơn đặt vé đã hoàn tất hoàn tiền, không thể hủy'
       : booking.status === 'EXPIRED'
       ? 'Đơn đặt vé đã hết hạn thanh toán'
       : undefined
-
-  const refundDisabledReason =
-    booking.status === 'REFUND_PENDING'
-      ? 'Đơn đặt vé đang trong tiến trình đối soát hoàn tiền'
-      : booking.status === 'REFUNDED'
-      ? 'Đơn đặt vé đã được hoàn tiền thành công'
-      : booking.status === 'CANCELLED'
-      ? 'Đơn đặt vé đã bị hủy, không thể yêu cầu hoàn tiền'
-      : booking.payment.status !== 'SUCCESS'
-      ? 'Chỉ có thể hoàn tiền cho đơn đã thanh toán thành công'
-      : undefined
+  const timeline = buildTimeline(booking)
+  const paymentDisplay = derivePaymentDisplay(booking)
+  const mainPayment = payments.find((p) => p.id === booking.paymentId) ?? payments[0]
 
   return (
     <div className="space-y-6">
-      {/* Top Header Bar with Back Link and Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-border/70 pb-5">
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2">
-            <Button
-              asChild
-              variant="ghost"
-              size="sm"
-              className="h-8 px-2 rounded-lg text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-            >
-              <Link to="/admin/bookings">
-                <ChevronLeft className="w-4 h-4 mr-1" />
-                <span>Danh sách đặt vé</span>
-              </Link>
-            </Button>
-            <span className="text-muted-foreground">•</span>
-            <span className="text-xs text-muted-foreground font-mono">
-              Tạo lúc: {booking.createdAt}
-            </span>
+      {/* Header */}
+      <div className="space-y-3">
+        <Link
+          to="/admin/bookings"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          Quay lại danh sách đặt vé
+        </Link>
+        <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-black font-heading text-foreground font-mono">{booking.bookingCode}</h1>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(booking.bookingCode, 'mã đơn')}
+                className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary cursor-pointer"
+                title="Sao chép mã đơn"
+              >
+                {copiedKey === 'mã đơn' ? (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
+              </button>
+              <AdminStatusBadge status={booking.status} size="sm" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Tạo lúc {formatDateTime(booking.createdAt)}
+              {booking.updatedAt ? ` • Cập nhật ${formatDateTime(booking.updatedAt)}` : ''}
+            </p>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl sm:text-2xl font-black font-heading tracking-tight text-foreground flex items-center gap-2">
-              <Ticket className="w-6 h-6 text-primary" />
-              <span>Đơn Đặt Vé:</span>
-              <span className="font-mono text-primary font-bold">{booking.bookingCode}</span>
-            </h1>
-
-            <button
-              type="button"
-              onClick={() => copyToClipboard(booking.bookingCode, 'Mã booking')}
-              className="p-1.5 rounded-lg border border-border/80 bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              title="Sao chép mã đơn"
-            >
-              {copiedKey === 'Mã booking' ? (
-                <Check className="w-4 h-4 text-emerald-400" />
-              ) : (
-                <Copy className="w-4 h-4" />
-              )}
-            </button>
-
-            <AdminStatusBadge status={booking.status} size="md" />
-          </div>
-        </div>
-
-        {/* Action Buttons with state guards */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          {/* Refund Action */}
-          <div className="relative group">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!canRefund}
-              onClick={() => setShowRefundDialog(true)}
-              className="h-9 gap-1.5 rounded-xl border-sky-500/30 text-sky-400 bg-sky-500/10 hover:bg-sky-500/20 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Yêu cầu hoàn tiền</span>
-            </Button>
-            {!canRefund && refundDisabledReason && (
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block z-20 w-64 p-2 rounded-xl bg-popover border border-border/80 text-[11px] text-muted-foreground shadow-xl">
-                {refundDisabledReason}
-              </div>
-            )}
-          </div>
-
-          {/* Cancel Action */}
-          <div className="relative group">
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              disabled={!canCancel}
-              onClick={() => setShowCancelDialog(true)}
-              className="h-9 gap-1.5 rounded-xl cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed font-bold"
-            >
-              <Ban className="w-3.5 h-3.5" />
-              <span>Hủy đơn đặt vé</span>
-            </Button>
-            {!canCancel && cancelDisabledReason && (
-              <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block z-20 w-64 p-2 rounded-xl bg-popover border border-border/80 text-[11px] text-muted-foreground shadow-xl">
-                {cancelDisabledReason}
-              </div>
-            )}
-          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={!canCancel}
+            title={cancelDisabledReason}
+            onClick={() => setShowCancelDialog(true)}
+            className="rounded-xl gap-1.5"
+          >
+            <Ban className="w-4 h-4" />
+            Huỷ đơn
+          </Button>
         </div>
       </div>
 
-      {/* Main Grid: 2 Columns */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Movie Snapshot & Booking Timeline (7 cols) */}
-        <div className="lg:col-span-7 space-y-6">
-          {/* Zone 1: Movie, Theater & Seat Snapshot Card */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-5">
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <Film className="w-4 h-4 text-primary" />
-                <span>Thông tin suất chiếu & Ghế đặt</span>
-              </h2>
-              <span className="text-xs font-mono font-bold text-primary">
-                {booking.seats.length} ghế
-              </span>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-4 items-start">
-              <img
-                src={booking.movie.posterUrl}
-                alt={booking.movie.title}
-                className="w-24 h-36 rounded-xl object-cover border border-border/80 shadow-md shrink-0 mx-auto sm:mx-0"
-              />
-
-              <div className="space-y-3 flex-1 min-w-0">
-                <div>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-base sm:text-lg font-black font-heading text-foreground">
-                      {booking.movie.title}
-                    </span>
-                    <Badge variant="outline" className="text-[10px] font-bold border-primary/40 text-primary">
-                      {booking.movie.ageRating}
-                    </Badge>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
-                    Thời lượng: {booking.movie.duration} phút • {booking.movie.format} •{' '}
-                    {booking.movie.language}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-secondary/30 p-3 rounded-xl border border-border/50">
-                  <div>
-                    <span className="text-muted-foreground block text-[11px]">Cụm rạp & Phòng</span>
-                    <span className="font-bold text-foreground block">
-                      {booking.theater.name}
-                    </span>
-                    <span className="text-primary font-semibold text-[11px]">
-                      {booking.theater.auditoriumName}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-muted-foreground block text-[11px]">Ngày & Giờ chiếu</span>
-                    <span className="font-bold text-foreground block font-mono">
-                      {formatDate(booking.showtime.date)}
-                    </span>
-                    <span className="text-primary font-semibold text-[11px] font-mono">
-                      {booking.showtime.startTime} - {booking.showtime.endTime}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Selected Seats */}
-                <div>
-                  <span className="text-xs text-muted-foreground block mb-1.5 font-medium">
-                    Vị trí ghế đã chọn:
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {booking.seats.map((seat) => (
-                      <div
-                        key={seat.seatId}
-                        className={cn(
-                          'flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-mono font-bold shadow-2xs',
-                          seat.type === 'vip'
-                            ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                            : seat.type === 'couple'
-                            ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
-                            : 'bg-secondary border-border/80 text-foreground'
-                        )}
-                      >
-                        <span>{seat.seatNumber}</span>
-                        <span className="text-[10px] opacity-75 font-normal">
-                          ({seat.type === 'vip' ? 'VIP' : seat.type === 'couple' ? 'Đôi' : 'Thường'})
-                        </span>
-                        <span className="text-[11px] text-muted-foreground border-l border-border/60 pl-1.5 ml-0.5">
-                          {formatVND(seat.price)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-6">
+          {/* Movie & showtime */}
+          <Section icon={Film} title="Phim & suất chiếu">
+            <div className="flex gap-4">
+              {booking.posterUrl ? (
+                <img
+                  src={booking.posterUrl}
+                  alt={booking.movieTitle ?? ''}
+                  className="w-20 h-28 rounded-lg object-cover border border-border/60 shrink-0"
+                />
+              ) : (
+                <div className="w-20 h-28 rounded-lg border border-border/60 bg-secondary shrink-0" />
+              )}
+              <div className="flex-1 space-y-2">
+                <div className="text-base font-bold text-foreground">{booking.movieTitle ?? EMPTY}</div>
+                <Row label="Rạp" value={booking.theaterName ?? EMPTY} />
+                <Row label="Thành phố" value={booking.theaterCity ?? EMPTY} />
+                <Row label="Phòng chiếu" value={booking.auditoriumName ?? EMPTY} />
+                <Row
+                  label="Suất chiếu"
+                  value={
+                    booking.showtimeStart
+                      ? `${formatTime(booking.showtimeStart)} – ${formatTime(booking.showtimeEnd)} • ${formatDate(booking.showtimeStart)}`
+                      : EMPTY
+                  }
+                />
               </div>
             </div>
-          </div>
+          </Section>
 
-          {/* Zone 2: Booking State Transition Timeline */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <Activity className="w-4 h-4 text-emerald-400" />
-                <span>Vòng đời đơn hàng (State Transitions)</span>
-              </h2>
-              <span className="text-xs text-muted-foreground font-mono">
-                {booking.timeline.length} sự kiện
-              </span>
-            </div>
-
-            <div className="relative pl-6 space-y-6 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/80">
-              {booking.timeline.map((event, index) => {
-                const isLatest = index === 0
-
-                return (
-                  <div key={event.id} className="relative space-y-1">
-                    {/* Event Dot */}
-                    <div
+          {/* Seats & pricing */}
+          <Section icon={Ticket} title={`Ghế đã đặt (${booking.seats.length})`}>
+            <div className="divide-y divide-border/60">
+              {booking.seats.map((seat) => (
+                <div key={seat.seatId} className="flex items-center justify-between py-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span
                       className={cn(
-                        'absolute -left-6 top-1 w-5 h-5 rounded-full border-2 flex items-center justify-center bg-card',
-                        isLatest
-                          ? 'border-primary text-primary shadow-xs ring-4 ring-primary/10'
-                          : 'border-muted-foreground/40 text-muted-foreground'
+                        'px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border',
+                        seatTypeClass(seat.seatType)
                       )}
                     >
-                      <div
-                        className={cn(
-                          'w-2 h-2 rounded-full',
-                          isLatest ? 'bg-primary' : 'bg-muted-foreground/50'
-                        )}
-                      />
-                    </div>
-
-                    {/* Event Header */}
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-foreground">{event.title}</span>
-                        <span
-                          className={cn(
-                            'text-[10px] px-1.5 py-0.5 rounded font-mono font-bold uppercase',
-                            event.actor === 'USER'
-                              ? 'bg-sky-500/15 text-sky-400 border border-sky-500/30'
-                              : event.actor === 'ADMIN'
-                              ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
-                              : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                          )}
-                        >
-                          {event.actor}
-                        </span>
-                      </div>
-
-                      <span className="text-[11px] font-mono text-muted-foreground">
-                        {event.timestamp}
-                      </span>
-                    </div>
-
-                    {/* Event Description */}
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {event.description}
-                    </p>
-
-                    {/* Correlation ID if present */}
-                    {event.correlationId && (
-                      <div className="flex items-center gap-1.5 pt-0.5">
-                        <span className="text-[10px] text-muted-foreground font-mono">
-                          Trace: {event.correlationId}
-                        </span>
-                      </div>
-                    )}
+                      {seatLabel(seat)}
+                    </span>
+                    <span className="text-muted-foreground">{seatTypeLabel(seat.seatType)}</span>
                   </div>
-                )
-              })}
+                  <span className="font-mono font-semibold text-foreground">{formatVND(seat.price)}</span>
+                </div>
+              ))}
             </div>
-          </div>
+            <div className="border-t border-border/80 pt-3 space-y-2">
+              <Row label="Tiền ghế" value={formatVND(booking.totalAmount)} mono />
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-foreground">Tổng thanh toán</span>
+                <span className="text-lg font-black font-mono text-primary">{formatVND(booking.totalAmount)}</span>
+              </div>
+            </div>
+          </Section>
+
+          {/* Timeline */}
+          <Section icon={Activity} title="Lịch sử trạng thái">
+            <ol className="relative border-l border-border/80 ml-2 space-y-4">
+              {timeline.map((item) => (
+                <li key={item.key} className="ml-4">
+                  <span className={cn('absolute -left-1.5 w-3 h-3 rounded-full mt-1', TONE_CLASS[item.tone])} />
+                  <div className="text-xs font-bold text-foreground">{item.title}</div>
+                  <div className="text-[11px] text-muted-foreground">{item.description}</div>
+                  <div className="text-[11px] text-muted-foreground font-mono">{formatDateTime(item.timestamp)}</div>
+                </li>
+              ))}
+            </ol>
+          </Section>
         </div>
 
-        {/* RIGHT COLUMN: Customer, Payment Breakdown, Technical Metadata (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Customer Card */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2 border-b border-border/60 pb-3">
-              <User className="w-4 h-4 text-primary" />
-              <span>Thông tin khách hàng</span>
-            </h2>
-
-            <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center font-black font-heading text-primary text-base shrink-0">
-                {booking.customer.fullName.charAt(0)}
+        <div className="space-y-6">
+          {/* Customer */}
+          <Section icon={User} title="Khách hàng">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full bg-primary/15 border border-primary/30 text-primary font-bold flex items-center justify-center">
+                {initials(customer?.fullName)}
               </div>
-              <div className="space-y-0.5 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-foreground text-sm truncate">
-                    {booking.customer.fullName}
-                  </span>
-                  <Badge variant="outline" className="text-[10px] font-bold border-amber-500/30 text-amber-400">
-                    {booking.customer.membershipTier}
-                  </Badge>
-                </div>
-                <div className="text-xs text-muted-foreground truncate">
-                  {booking.customer.email}
-                </div>
-                <div className="text-xs text-muted-foreground font-mono">
-                  {booking.customer.phone}
-                </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold text-foreground truncate">{customer?.fullName ?? 'Khách hàng'}</div>
+                <div className="text-[11px] text-muted-foreground truncate">{customer?.email ?? EMPTY}</div>
               </div>
             </div>
-          </div>
+            <Row label="Số điện thoại" value={customer?.phone ?? EMPTY} mono />
+            <Row label="User ID" value={booking.userId} mono />
+          </Section>
 
-          {/* Pricing & Invoice Breakdown */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
-            <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2 border-b border-border/60 pb-3">
-              <CreditCard className="w-4 h-4 text-emerald-400" />
-              <span>Chi tiết thanh toán</span>
-            </h2>
-
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between text-muted-foreground">
-                <span>Tiền vé ({booking.seats.length} ghế)</span>
-                <span className="font-mono font-bold text-foreground">
-                  {formatVND(booking.pricing.seatsTotal)}
-                </span>
-              </div>
-
-              <div className="flex justify-between text-muted-foreground">
-                <span>Combo bắp nước & snack</span>
-                <span className="font-mono font-bold text-foreground">
-                  {formatVND(booking.pricing.comboSnackTotal)}
-                </span>
-              </div>
-
-              {booking.pricing.discountAmount > 0 && (
-                <div className="flex justify-between text-emerald-400">
-                  <span>Giảm giá / Voucher</span>
-                  <span className="font-mono font-bold">
-                    - {formatVND(booking.pricing.discountAmount)}
-                  </span>
-                </div>
-              )}
-
-              <div className="border-t border-border/60 pt-2.5 flex justify-between items-baseline">
-                <span className="font-bold text-foreground text-sm">Tổng tiền thanh toán</span>
-                <span className="font-mono font-black text-lg text-primary tabular-nums">
-                  {formatVND(booking.pricing.finalTotal)}
-                </span>
-              </div>
-            </div>
-
-            {/* Payment Gateway info box */}
-            <div className="rounded-xl bg-secondary/30 p-3.5 border border-border/60 space-y-2 text-xs">
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Phương thức:</span>
-                <span className="font-mono font-bold text-foreground">
-                  {booking.payment.method}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Trạng thái cổng:</span>
-                <span
-                  className={cn(
-                    'font-semibold',
-                    booking.payment.status === 'SUCCESS'
-                      ? 'text-emerald-400'
-                      : booking.payment.status === 'PENDING'
-                      ? 'text-amber-400'
-                      : booking.payment.status === 'REFUNDED'
-                      ? 'text-indigo-400'
-                      : 'text-rose-400'
-                  )}
-                >
-                  {booking.payment.status}
-                </span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Mã đối soát:</span>
-                <span className="font-mono text-muted-foreground truncate max-w-[170px]">
-                  {booking.payment.providerRef}
-                </span>
-              </div>
-              {booking.payment.paidAt && (
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Thời gian trừ tiền:</span>
-                  <span className="font-mono text-muted-foreground">
-                    {booking.payment.paidAt}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Collapsible Technical Metadata */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md shadow-xs overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setShowMetadata(!showMetadata)}
-              className="w-full p-4 flex items-center justify-between text-left hover:bg-secondary/20 transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2">
-                <Terminal className="w-4 h-4 text-primary" />
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Metadata Kỹ Thuật (Kafka / Microservices)
-                </span>
-              </div>
-              {showMetadata ? (
-                <ChevronUp className="w-4 h-4 text-muted-foreground" />
-              ) : (
-                <ChevronDown className="w-4 h-4 text-muted-foreground" />
-              )}
-            </button>
-
-            {showMetadata && (
-              <div className="p-4 pt-0 border-t border-border/60 bg-secondary/10 space-y-2.5 text-xs">
-                {/* Kafka Info */}
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">Kafka Topic:</span>
-                  <span className="font-mono text-primary font-bold text-[11px]">
-                    {booking.metadata.kafkaTopic}
-                  </span>
-                </div>
-
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">Partition & Offset:</span>
-                  <span className="font-mono text-muted-foreground text-[11px]">
-                    p={booking.metadata.kafkaPartition} | offset={booking.metadata.kafkaOffset}
-                  </span>
-                </div>
-
-                {/* Correlation ID */}
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">Correlation ID:</span>
-                  <div className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                    <span className="truncate max-w-[140px]">{booking.metadata.correlationId}</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyToClipboard(booking.metadata.correlationId, 'Correlation ID')
-                      }
-                      className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                    >
-                      {copiedKey === 'Correlation ID' ? (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3 h-3" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Booking ID */}
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">Internal Booking ID:</span>
-                  <div className="flex items-center gap-1 font-mono text-[11px] text-muted-foreground">
-                    <span>{booking.metadata.bookingId}</span>
-                    <button
-                      type="button"
-                      onClick={() => copyToClipboard(booking.metadata.bookingId, 'Booking ID')}
-                      className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
-                    >
-                      {copiedKey === 'Booking ID' ? (
-                        <Check className="w-3 h-3 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3 h-3" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {/* User ID */}
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">User ID:</span>
-                  <span className="font-mono text-[11px] text-muted-foreground">
-                    {booking.metadata.userId}
-                  </span>
-                </div>
-
-                {/* Showtime ID */}
-                <div className="flex justify-between items-center py-1 border-b border-border/40">
-                  <span className="text-muted-foreground">Showtime ID:</span>
-                  <span className="font-mono text-[11px] text-muted-foreground">
-                    {booking.metadata.showtimeId}
-                  </span>
-                </div>
-
-                {/* Client IP & User Agent */}
-                <div className="flex justify-between items-center py-1">
-                  <span className="text-muted-foreground">IP Khách Hàng:</span>
-                  <span className="font-mono text-[11px] text-muted-foreground">
-                    {booking.metadata.ipAddress}
-                  </span>
-                </div>
-              </div>
+          {/* Payment */}
+          <Section icon={CreditCard} title="Thanh toán">
+            <Row
+              label="Trạng thái"
+              value={<span className={paymentDisplay.className}>{paymentDisplay.label}</span>}
+            />
+            {mainPayment ? (
+              <>
+                <Row label="Mã giao dịch" value={mainPayment.paymentCode} mono />
+                <Row label="Phương thức" value={mainPayment.method} mono />
+                <Row label="Số tiền" value={formatVND(mainPayment.amount)} mono />
+                <Row label="Kết quả" value={PAYMENT_STATUS_LABEL[mainPayment.status] ?? mainPayment.status} />
+                {mainPayment.providerRef && <Row label="Mã nhà cung cấp" value={mainPayment.providerRef} mono />}
+                <Row label="Thanh toán lúc" value={formatDateTime(mainPayment.paidAt)} />
+                {mainPayment.failureMessage && <Row label="Lỗi" value={mainPayment.failureMessage} />}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Chưa có giao dịch thanh toán cho đơn này.</p>
             )}
-          </div>
+            {payments.length > 0 && (
+              <Button asChild variant="outline" size="sm" className="w-full rounded-xl">
+                <Link to={`/admin/payments?bookingId=${booking.id}`}>
+                  Xem {payments.length} giao dịch thanh toán
+                </Link>
+              </Button>
+            )}
+          </Section>
+
+          {booking.cancelReason && (
+            <Section icon={Ban} title="Lý do huỷ">
+              <p className="text-xs text-foreground">{booking.cancelReason}</p>
+            </Section>
+          )}
         </div>
       </div>
 
-      {/* Cancel Dialog */}
       <AdminConfirmDialog
         isOpen={showCancelDialog}
         title="Xác nhận hủy đơn đặt vé"
         targetName={booking.bookingCode}
-        description={`Bạn chuẩn bị hủy đơn đặt vé của khách hàng ${booking.customer.fullName}. Hành động này sẽ chuyển trạng thái booking sang CANCELLED.`}
-        consequenceWarning="Toàn bộ ghế ngồi trong đơn vé sẽ được giải phóng ngay lập tức. Hệ thống sẽ phát hành event Kafka hủy vé và gửi thông báo hoàn tất đến khách hàng."
+        description={`Bạn đang huỷ đơn chờ thanh toán của khách hàng "${customer?.fullName ?? booking.userId}". Trạng thái đơn sẽ chuyển thành CANCELLED.`}
+        consequenceWarning="Các ghế đang giữ trong đơn này sẽ được giải phóng để khách hàng khác có thể chọn."
         confirmText="Hủy đơn đặt vé"
         cancelText="Đóng"
         variant="destructive"
         isLoading={isCancelling}
-        onConfirm={handleCancelBooking}
-        onCancel={() => {
-          setShowCancelDialog(false)
-          setCancelReason('')
-        }}
-      />
-
-      {/* Refund Dialog */}
-      <AdminConfirmDialog
-        isOpen={showRefundDialog}
-        title="Khởi tạo yêu cầu hoàn tiền"
-        targetName={booking.bookingCode}
-        description={`Bạn chuẩn bị khởi tạo yêu cầu hoàn lại ${formatVND(booking.pricing.finalTotal)} cho khách hàng ${booking.customer.fullName}.`}
-        consequenceWarning="Yêu cầu đối soát hoàn tiền sẽ được gửi tới cổng thanh toán tương ứng. Đơn đặt vé sẽ chuyển sang trạng thái REFUND_PENDING."
-        confirmText="Xác nhận hoàn tiền"
-        cancelText="Đóng"
-        variant="warning"
-        isLoading={isRefunding}
-        onConfirm={handleRefundBooking}
-        onCancel={() => {
-          setShowRefundDialog(false)
-          setRefundReason('')
-        }}
+        onConfirm={() => void handleCancelBooking()}
+        onCancel={() => setShowCancelDialog(false)}
       />
     </div>
   )

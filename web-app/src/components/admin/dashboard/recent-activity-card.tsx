@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import {
   History,
   Film,
@@ -45,17 +46,20 @@ export function RecentActivityCard({ activities, className }: RecentActivityCard
               <span>Hoạt Động Gần Đây</span>
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Nhật ký thao tác quản trị và tác vụ hệ thống tự động
+              Các đơn đặt vé mới nhất trên hệ thống
             </p>
           </div>
 
           <span className="text-xs font-semibold text-muted-foreground font-mono">
-            {activities.length} sự kiện
+            {activities.length} đơn
           </span>
         </div>
 
         {/* Activity Timeline List */}
         <div className="mt-4 space-y-3.5">
+          {activities.length === 0 && (
+            <p className="py-6 text-center text-xs text-muted-foreground">Chưa có đơn đặt vé nào.</p>
+          )}
           {activities.map((act) => (
             <div key={act.id} className="flex items-start gap-3 text-xs">
               {/* Icon avatar / pill */}
@@ -98,10 +102,10 @@ export function RecentActivityCard({ activities, className }: RecentActivityCard
       </div>
 
       <div className="mt-5 pt-3 border-t border-border/50 text-[11px] text-muted-foreground flex items-center justify-between">
-        <span>Ghi nhận từ Audit Log Service:</span>
-        <span className="font-semibold text-emerald-600 dark:text-emerald-400 font-mono">
-          Hoạt động bình thường
-        </span>
+        <span>Nguồn: Booking Service</span>
+        <Link to="/admin/bookings" className="font-semibold text-primary hover:underline">
+          Xem tất cả đơn
+        </Link>
       </div>
     </div>
   )

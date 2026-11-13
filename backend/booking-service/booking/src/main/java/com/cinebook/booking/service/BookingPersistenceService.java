@@ -66,6 +66,7 @@ public class BookingPersistenceService {
         Booking booking = new Booking(UUID.randomUUID(), code, command.requestId(), command.requestHash(),
             command.userId(), command.showtimeId(), command.movieId(), command.theaterId(), command.auditoriumId(),
             command.totalAmount(), command.expiresAt(), now);
+        booking.applySnapshot(command.snapshot());
         bookings.saveAndFlush(booking);
         List<BookingSeat> bookingSeats = new ArrayList<>();
         for (int i = 0; i < command.seats().size(); i++) {
@@ -167,10 +168,11 @@ public class BookingPersistenceService {
         return BookingPaymentStatus.from(booking);
     }
 
+    /** userId = null: admin huỷ, bỏ qua kiểm tra chủ sở hữu (quyền ADMIN đã được gateway kiểm tra). */
     @Transactional
     public TransitionResult cancel(UUID bookingId, UUID userId, String reason) {
         Booking booking = bookings.findByIdForUpdate(bookingId).orElseThrow(BookingNotFoundException::new);
-        checkOwner(booking, userId);
+        if (userId != null) checkOwner(booking, userId);
         if (booking.getStatus() != BookingStatus.PENDING_PAYMENT) {
             throw new InvalidBookingStateException("Booking hiện ở trạng thái " + booking.getStatus());
         }

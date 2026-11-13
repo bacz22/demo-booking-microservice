@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useParams, useLocation, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft,
   Printer,
@@ -23,14 +23,13 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
-import { MOCK_BOOKINGS, type MockBookingRecord } from '@/mocks/bookings'
-import { MOCK_CINEMAS } from '@/mocks/cinemas'
 import { formatPrice } from '@/lib/utils'
 import { toast } from '@/lib/toast'
 import type { BookingStatus, BookingHistoryItem } from '@/types/booking'
 import { bookingApiService } from '@/services/booking-api.service'
 import { movieApiService } from '@/services/movie-api.service'
 import { theaterApiService } from '@/services/theater-api.service'
+import { showtimeApiService } from '@/services/showtime-api.service'
 import { cn } from '@/lib/utils'
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -90,7 +89,6 @@ const STATUS_CONFIG: Record<BookingStatus, StatusInfo> = {
 
 export default function BookingDetailPage() {
   const { bookingId } = useParams<{ bookingId: string }>()
-  const location = useLocation()
   const navigate = useNavigate()
 
   const [liveBooking, setLiveBooking] = useState<BookingHistoryItem | null>(null)
@@ -98,65 +96,79 @@ export default function BookingDetailPage() {
   const [isCancelling, setIsCancelling] = useState(false)
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false)
 
-  // 1. Tải dữ liệu booking thực tế từ Booking Service API nếu bookingId là UUID
+  const [theaterInfo, setTheaterInfo] = useState<{ address: string; hotline: string } | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  // 1. Tải dữ liệu booking thực tế từ Booking Service API (không còn dữ liệu mẫu)
   useEffect(() => {
     if (!bookingId || !UUID_REGEX.test(bookingId)) {
+      setLoadFailed(true)
       setIsLoading(false)
       return
     }
 
     let isCancelled = false
     setIsLoading(true)
+    setLoadFailed(false)
 
     bookingApiService
       .getBookingById(bookingId)
       .then(async (b) => {
         if (isCancelled) return
 
-        let movieTitle = 'Phim rạp CineBook'
-        let poster = 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80'
-        let cinema = 'CineBook Cinema'
-        let room = 'Phòng chiếu tiêu chuẩn'
+        // Ưu tiên snapshot lưu trong booking; chỉ gọi API khác khi snapshot thiếu
+        let movieTitle = b.movieTitle || ''
+        let poster = b.posterUrl || ''
+        let cinema = b.theaterName || ''
+        let room = b.auditoriumName || ''
+        let showtimeStart = b.showtimeStart || ''
 
-        if (b.movieId) {
-          try {
-            const mv = await movieApiService.getMovieById(b.movieId)
-            if (mv) {
-              movieTitle = mv.title
-              poster = mv.posterUrl || poster
-            }
-          } catch {
-            // fallback
-          }
+        const [mv, th, st] = await Promise.all([
+          (!movieTitle || !poster) && b.movieId
+            ? movieApiService.getMovieById(b.movieId).catch(() => null)
+            : Promise.resolve(null),
+          b.theaterId ? theaterApiService.getPublicTheaterById(b.theaterId).catch(() => null) : Promise.resolve(null),
+          (!showtimeStart || !room) && b.showtimeId
+            ? showtimeApiService.getPublicShowtimeById(b.showtimeId).catch(() => null)
+            : Promise.resolve(null),
+        ])
+        if (isCancelled) return
+
+        if (mv) {
+          movieTitle = movieTitle || mv.title
+          poster = poster || mv.posterUrl
+        }
+        if (th) {
+          cinema = cinema || th.name
+          setTheaterInfo({ address: th.address, hotline: th.hotline })
+        }
+        if (st) {
+          showtimeStart = showtimeStart || st.startTime
+          room = room || st.auditoriumName
+          cinema = cinema || st.theaterName
         }
 
-        if (b.theaterId) {
-          try {
-            const th = await theaterApiService.getPublicTheaterById(b.theaterId)
-            if (th) cinema = th.name
-          } catch {
-            // fallback
-          }
+        let showtime = ''
+        if (showtimeStart) {
+          const d = new Date(showtimeStart)
+          const time = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+          const date = d.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+          showtime = `${time} • ${date}`
         }
 
         const item = bookingApiService.mapBackendBookingToHistoryItem(b, {
-          movieTitle,
-          poster,
-          cinema,
-          room,
-          showtime: new Date(b.createdAt).toLocaleDateString('vi-VN', {
-            hour: '2-digit',
-            minute: '2-digit',
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-          }),
+          movieTitle: movieTitle || undefined,
+          poster: poster || undefined,
+          cinema: cinema || undefined,
+          room: room || undefined,
+          showtime: showtime || undefined,
         })
 
         setLiveBooking(item)
       })
       .catch((err) => {
         console.warn('Không thể nạp chi tiết đơn đặt vé từ backend:', err)
+        if (!isCancelled) setLoadFailed(true)
       })
       .finally(() => {
         if (!isCancelled) setIsLoading(false)
@@ -167,71 +179,31 @@ export default function BookingDetailPage() {
     }
   }, [bookingId])
 
-  // 2. Tìm hoặc tổng hợp dữ liệu đơn vé fallback
-  const fallbackBooking = useMemo<MockBookingRecord>(() => {
-    const stateData = location.state?.booking
-    if (stateData) return stateData
-
-    if (bookingId) {
-      const q = bookingId.toLowerCase()
-      const found = MOCK_BOOKINGS.find(
-        (b) => b.bookingCode.toLowerCase() === q || b.id?.toLowerCase() === q
-      )
-      if (found) return found
-    }
-
-    return {
-      id: 'b-fallback',
-      bookingCode: bookingId || 'CB-849201',
-      movieTitle: 'Dune: Hành Tinh Cát - Phần Hai',
-      poster:
-        'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=600&auto=format&fit=crop&q=80',
-      cinema: 'CineBook Landmark 81',
-      room: 'Phòng chiếu 02 - ScreenX',
-      showtime: '19:30 • 20/09/2026',
-      seats: ['C5', 'C6'],
-      total: 190000,
-      status: 'CONFIRMED',
-      category: 'upcoming',
-      createdAt: '14/09/2026',
-    }
-  }, [bookingId, location.state])
-
-  const booking = liveBooking || fallbackBooking
+  const booking = liveBooking
 
   // Cập nhật tiêu đề trang
   useEffect(() => {
+    if (!booking) return
     document.title = `Vé điện tử ${booking.bookingCode} - ${booking.movieTitle} | CineBook`
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }, [booking])
 
-  // Tìm thông tin chi tiết cụm rạp để lấy địa chỉ và hotline
-  const cinemaInfo = useMemo(() => {
-    const found = MOCK_CINEMAS.find(
-      (c) =>
-        booking.cinema.toLowerCase().includes(c.name.toLowerCase()) ||
-        c.name.toLowerCase().includes(booking.cinema.toLowerCase())
-    )
-    return found || MOCK_CINEMAS[0]
-  }, [booking.cinema])
-
-  const statusMeta = STATUS_CONFIG[booking.status] || STATUS_CONFIG.CONFIRMED
-  const StatusIcon = statusMeta.icon
-
   // Trích xuất giờ và ngày từ chuỗi showtime
   const [showTimeHour, showTimeDate] = useMemo(() => {
-    if (booking.showtime.includes('•')) {
-      const parts = booking.showtime.split('•').map((s) => s.trim())
+    const value = booking?.showtime ?? ''
+    if (value.includes('•')) {
+      const parts = value.split('•').map((s) => s.trim())
       return [parts[0], parts[1]]
     }
-    return [booking.showtime, '20/09/2026']
-  }, [booking.showtime])
+    return [value, '']
+  }, [booking?.showtime])
 
   // Tải file sự kiện lịch hoặc mở Google Calendar
   const handleAddToCalendar = () => {
+    if (!booking) return
     const title = `Xem phim: ${booking.movieTitle} - CineBook`
     const desc = `Vé xem phim tại ${booking.cinema}, ${booking.room || 'Phòng chiếu'}. Ghế: ${booking.seats.join(', ')}. Mã vé: ${booking.bookingCode}`
-    const locationStr = `${booking.cinema}, ${cinemaInfo.address}`
+    const locationStr = theaterInfo?.address ? `${booking.cinema}, ${theaterInfo.address}` : booking.cinema
 
     const gCalUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
       title
@@ -243,6 +215,7 @@ export default function BookingDetailPage() {
 
   // Chia sẻ vé điện tử
   const handleShareTicket = async () => {
+    if (!booking) return
     const shareData = {
       title: `Vé xem phim: ${booking.movieTitle}`,
       text: `Tôi đã đặt vé xem phim ${booking.movieTitle} tại ${booking.cinema} vào lúc ${booking.showtime}. Ghế: ${booking.seats.join(', ')}!`,
@@ -275,6 +248,7 @@ export default function BookingDetailPage() {
 
   // Mở modal xác nhận hủy đơn giữ chỗ
   const handleRequestCancel = () => {
+    if (!booking) return
     if (!booking.id || !UUID_REGEX.test(booking.id)) {
       toast.error('Không thể hủy đơn vé này.')
       return
@@ -284,6 +258,7 @@ export default function BookingDetailPage() {
 
   // Thực hiện hủy đơn sau khi user đã xác nhận trong ConfirmDialog
   const handleConfirmCancel = async () => {
+    if (!booking) return
     if (!booking.id || !UUID_REGEX.test(booking.id)) return
 
     setIsCancelling(true)
@@ -318,6 +293,23 @@ export default function BookingDetailPage() {
     )
   }
 
+  if (!booking || loadFailed) {
+    return (
+      <div className="max-w-xl mx-auto py-16 text-center space-y-4">
+        <AlertTriangle className="h-10 w-10 text-amber-500 mx-auto" />
+        <h1 className="text-xl font-bold text-foreground">Không tìm thấy vé</h1>
+        <p className="text-sm text-muted-foreground">
+          Không thể tải thông tin đơn đặt vé này. Vé có thể không tồn tại hoặc không thuộc tài khoản của bạn.
+        </p>
+        <Button asChild variant="outline">
+          <Link to="/my-bookings">Quay lại Vé của tôi</Link>
+        </Button>
+      </div>
+    )
+  }
+
+  const statusMeta = STATUS_CONFIG[booking.status] || STATUS_CONFIG.CONFIRMED
+  const StatusIcon = statusMeta.icon
   const isPending = booking.status === 'PENDING' || booking.status === 'PENDING_PAYMENT'
 
   return (
@@ -622,7 +614,7 @@ export default function BookingDetailPage() {
             <div className="rounded-xl bg-secondary/40 p-3 text-xs space-y-1.5 border border-border/40">
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Phương thức thanh toán:</span>
-                <strong className="text-foreground font-semibold">VNPAY-QR / Mock</strong>
+                <strong className="text-foreground font-semibold">Thanh toán trực tuyến</strong>
               </div>
               <div className="flex items-center justify-between text-muted-foreground">
                 <span>Thời gian giao dịch:</span>
@@ -654,14 +646,16 @@ export default function BookingDetailPage() {
             <div className="space-y-3 border-t border-border/40 pt-3 text-xs">
               <div>
                 <p className="font-bold text-sm text-foreground">{booking.cinema}</p>
-                <p className="text-muted-foreground mt-0.5">{cinemaInfo.address}</p>
+                {theaterInfo?.address && (
+                  <p className="text-muted-foreground mt-0.5">{theaterInfo.address}</p>
+                )}
               </div>
 
-              {cinemaInfo.hotline && (
+              {theaterInfo?.hotline && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Phone className="h-3.5 w-3.5 text-primary" />
                   <span>
-                    Hotline: <strong className="text-foreground">{cinemaInfo.hotline}</strong>
+                    Hotline: <strong className="text-foreground">{theaterInfo.hotline}</strong>
                   </span>
                 </div>
               )}

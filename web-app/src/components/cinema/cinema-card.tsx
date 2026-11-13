@@ -3,7 +3,7 @@ import { MapPin, Phone, Clock, Navigation, Film, Sparkles, Building2 } from 'luc
 import { ShowtimeButton } from '@/components/movie/showtime-button'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import type { CinemaWithShowtimes } from '@/mocks/cinemas'
+import type { CinemaWithShowtimes } from '@/types/cinema'
 import { cn } from '@/lib/utils'
 
 export interface CinemaCardProps {

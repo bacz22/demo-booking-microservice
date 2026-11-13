@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import {
   ChevronLeft,
@@ -9,29 +9,32 @@ import {
   ShieldCheck,
   UserCheck,
   UserX,
-  Sparkles,
   Ticket,
-  History,
   ExternalLink,
   ShieldAlert,
+  Info,
 } from 'lucide-react'
-import type {
-  AdminUser,
-  AdminUserRole,
-  AdminUserStatus,
-} from '@/types/admin-user'
-import {
-  getAdminUserById,
-  updateUserStatus,
-  updateUserRoles,
-} from '@/mocks/admin/users'
+import type { AdminUser, AdminUserRole, AdminUserStatus } from '@/types/admin-user'
+import type { BackendBookingResponse } from '@/types/booking'
+import { adminBookingApi, adminUserApi } from '@/services/admin-api.service'
+import { ApiClientError } from '@/lib/api-client'
 import { useAuth } from '@/context/auth-context'
 import { AdminStatusBadge } from '@/components/admin/common/admin-status-badge'
 import { AdminConfirmDialog } from '@/components/admin/common/admin-confirm-dialog'
+import { UserInitialsAvatar } from '@/components/admin/users/user-initials-avatar'
+import {
+  USER_STATUS_LABEL,
+  errorMessage,
+  formatDateTime,
+  formatVND,
+} from '@/components/admin/users/user-utils'
+import { PageErrorState } from '@/components/ui/page-error-state'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
+
+const RECENT_BOOKINGS_LIMIT = 5
 
 export default function AdminUserDetail() {
   const { userId } = useParams<{ userId: string }>()
@@ -39,40 +42,71 @@ export default function AdminUserDetail() {
 
   const [user, setUser] = useState<AdminUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  // Recent bookings
+  const [bookings, setBookings] = useState<BackendBookingResponse[]>([])
+  const [bookingTotal, setBookingTotal] = useState(0)
+  const [bookingsLoading, setBookingsLoading] = useState(true)
+  const [bookingsError, setBookingsError] = useState<string | null>(null)
 
   // Role edit state
   const [isEditingRoles, setIsEditingRoles] = useState(false)
   const [selectedRoles, setSelectedRoles] = useState<AdminUserRole[]>([])
   const [showRoleConfirmDialog, setShowRoleConfirmDialog] = useState(false)
-  const [roleReason, setRoleReason] = useState('')
   const [isUpdatingRole, setIsUpdatingRole] = useState(false)
 
   // Status edit state
   const [showStatusDialog, setShowStatusDialog] = useState(false)
   const [targetStatus, setTargetStatus] = useState<AdminUserStatus>('ACTIVE')
-  const [statusReason, setStatusReason] = useState('')
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false)
 
-  useEffect(() => {
+  const loadUser = useCallback(async () => {
     if (!userId) return
     setLoading(true)
+    setNotFound(false)
+    setLoadError(null)
     try {
-      const data = getAdminUserById(userId)
+      const data = await adminUserApi.get(userId)
       setUser(data)
-      if (data) {
-        setSelectedRoles(data.roles)
-      }
+      setSelectedRoles(data.roles)
     } catch (err) {
-      console.error('Failed to load user detail:', err)
-      toast.error('Không thể tải chi tiết người dùng')
+      setUser(null)
+      if (err instanceof ApiClientError && err.status === 404) {
+        setNotFound(true)
+      } else {
+        setLoadError(errorMessage(err, 'Không thể tải chi tiết người dùng'))
+      }
     } finally {
       setLoading(false)
     }
   }, [userId])
 
+  const loadBookings = useCallback(async () => {
+    if (!userId) return
+    setBookingsLoading(true)
+    setBookingsError(null)
+    try {
+      const res = await adminBookingApi.list({ userId, pageSize: RECENT_BOOKINGS_LIMIT })
+      setBookings(res.items)
+      setBookingTotal(res.total)
+    } catch (err) {
+      setBookings([])
+      setBookingsError(errorMessage(err, 'Không thể tải đơn đặt vé của người dùng'))
+    } finally {
+      setBookingsLoading(false)
+    }
+  }, [userId])
+
+  useEffect(() => {
+    void loadUser()
+    void loadBookings()
+  }, [loadUser, loadBookings])
+
   const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text)
+    void navigator.clipboard.writeText(text)
     setCopiedKey(label)
     toast.success(`Đã sao chép ${label}`)
     setTimeout(() => setCopiedKey(null), 2000)
@@ -80,90 +114,62 @@ export default function AdminUserDetail() {
 
   const isSelf = Boolean(currentUser && user && currentUser.id === user.id)
 
-  // Role toggle
-  const handleToggleRole = (role: AdminUserRole) => {
-    if (isSelf && role === 'ADMIN' && selectedRoles.includes('ADMIN')) {
+  // Chỉ bật/tắt ADMIN; USER luôn được giữ (backend tự thêm lại)
+  const handleToggleAdmin = () => {
+    if (isSelf && selectedRoles.includes('ADMIN')) {
       toast.warning('Bạn không thể tự gỡ quyền Quản trị viên của chính mình.')
       return
     }
-
-    if (selectedRoles.includes(role)) {
-      if (selectedRoles.length === 1) {
-        toast.warning('Người dùng phải có ít nhất một vai trò.')
-        return
-      }
-      setSelectedRoles(selectedRoles.filter((r) => r !== role))
-    } else {
-      setSelectedRoles([...selectedRoles, role])
-    }
+    setSelectedRoles(
+      selectedRoles.includes('ADMIN') ? ['USER'] : ['USER', 'ADMIN']
+    )
   }
 
-  const handleSaveRoles = () => {
-    if (!user) return
-    setShowRoleConfirmDialog(true)
-  }
+  const rolesChanged =
+    user !== null &&
+    (selectedRoles.length !== user.roles.length || selectedRoles.some((r) => !user.roles.includes(r)))
 
-  const handleConfirmRoleChange = () => {
+  const handleConfirmRoleChange = async () => {
     if (!user) return
     setIsUpdatingRole(true)
-    const actorName = currentUser?.fullName ? `${currentUser.fullName} (Admin)` : 'Admin'
-
     try {
-      const res = updateUserRoles(user.id, selectedRoles, roleReason, actorName)
-      if (res.success && res.user) {
-        setUser(res.user)
-        setIsEditingRoles(false)
-        setShowRoleConfirmDialog(false)
-        setRoleReason('')
-        toast.success(res.message)
-      } else {
-        toast.error(res.message)
-      }
-    } catch {
-      toast.error('Có lỗi xảy ra khi cập nhật vai trò')
+      const updated = await adminUserApi.updateRoles(user.id, selectedRoles)
+      setUser(updated)
+      setSelectedRoles(updated.roles)
+      setIsEditingRoles(false)
+      setShowRoleConfirmDialog(false)
+      toast.success('Đã cập nhật phân quyền. Thay đổi có hiệu lực khi người dùng làm mới phiên (tối đa 15 phút).')
+    } catch (err) {
+      toast.error(errorMessage(err, 'Có lỗi xảy ra khi cập nhật vai trò'))
     } finally {
       setIsUpdatingRole(false)
     }
   }
 
-  // Status toggle
   const handleOpenStatusModal = (newStatus: AdminUserStatus) => {
-    if (isSelf && (newStatus === 'SUSPENDED' || newStatus === 'LOCKED')) {
-      toast.error('Bạn không thể tự khóa tài khoản của chính mình.')
+    if (isSelf && newStatus === 'LOCKED') {
+      toast.error('Bạn không thể tự khoá tài khoản của chính mình.')
       return
     }
     setTargetStatus(newStatus)
-    setStatusReason('')
     setShowStatusDialog(true)
   }
 
-  const handleConfirmStatusChange = () => {
+  const handleConfirmStatusChange = async () => {
     if (!user) return
     setIsUpdatingStatus(true)
-    const actorName = currentUser?.fullName ? `${currentUser.fullName} (Admin)` : 'Admin'
-
     try {
-      const res = updateUserStatus(user.id, targetStatus, statusReason, actorName)
-      if (res.success && res.user) {
-        setUser(res.user)
-        setShowStatusDialog(false)
-        setStatusReason('')
-        toast.success(res.message)
-      } else {
-        toast.error(res.message)
-      }
-    } catch {
-      toast.error('Có lỗi xảy ra khi cập nhật trạng thái')
+      const updated = await adminUserApi.updateStatus(user.id, targetStatus)
+      setUser(updated)
+      setShowStatusDialog(false)
+      toast.success(
+        targetStatus === 'LOCKED' ? 'Đã khoá tài khoản người dùng' : 'Đã kích hoạt lại tài khoản người dùng'
+      )
+    } catch (err) {
+      toast.error(errorMessage(err, 'Có lỗi xảy ra khi cập nhật trạng thái'))
     } finally {
       setIsUpdatingStatus(false)
     }
-  }
-
-  const formatVND = (amount: number) => {
-    return new Intl.NumberFormat('vi-VN', {
-      style: 'currency',
-      currency: 'VND',
-    }).format(amount)
   }
 
   if (loading) {
@@ -179,7 +185,17 @@ export default function AdminUserDetail() {
     )
   }
 
-  if (!user) {
+  if (loadError) {
+    return (
+      <PageErrorState
+        title="Không thể tải chi tiết người dùng"
+        message={loadError}
+        onRetry={() => void loadUser()}
+      />
+    )
+  }
+
+  if (!user || notFound) {
     return (
       <div className="rounded-2xl border border-border/80 bg-card/60 p-12 text-center space-y-4">
         <div className="w-12 h-12 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-500 flex items-center justify-center mx-auto">
@@ -195,6 +211,8 @@ export default function AdminUserDetail() {
       </div>
     )
   }
+
+  const isLocked = user.status === 'LOCKED'
 
   return (
     <div className="space-y-6">
@@ -214,9 +232,7 @@ export default function AdminUserDetail() {
               </Link>
             </Button>
             <span className="text-muted-foreground">•</span>
-            <span className="text-xs text-muted-foreground font-mono">
-              ID: {user.id}
-            </span>
+            <span className="text-xs text-muted-foreground font-mono">ID: {user.id}</span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -236,6 +252,7 @@ export default function AdminUserDetail() {
               onClick={() => copyToClipboard(user.id, 'User ID')}
               className="p-1.5 rounded-lg border border-border/80 bg-secondary/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               title="Sao chép mã người dùng"
+              aria-label="Sao chép mã người dùng"
             >
               {copiedKey === 'User ID' ? (
                 <Check className="w-4 h-4 text-emerald-400" />
@@ -244,7 +261,9 @@ export default function AdminUserDetail() {
               )}
             </button>
 
-            <AdminStatusBadge status={user.status} size="md" />
+            {user.status && (
+              <AdminStatusBadge status={user.status} label={USER_STATUS_LABEL[user.status]} size="md" />
+            )}
 
             <div className="flex items-center gap-1.5">
               {user.roles.map((r) => (
@@ -266,25 +285,19 @@ export default function AdminUserDetail() {
 
         {/* Top Status Toggle Actions */}
         <div className="flex items-center gap-2.5">
-          {user.status === 'ACTIVE' ? (
-            <div className="relative group">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={isSelf}
-                onClick={() => handleOpenStatusModal('SUSPENDED')}
-                className="h-9 gap-1.5 rounded-xl border-amber-500/30 text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed font-bold"
-              >
-                <UserX className="w-4 h-4" />
-                <span>Tạm đình chỉ tài khoản</span>
-              </Button>
-              {isSelf && (
-                <div className="absolute right-0 top-full mt-1.5 hidden group-hover:block z-20 w-64 p-2 rounded-xl bg-popover border border-border/80 text-[11px] text-muted-foreground shadow-xl">
-                  Bạn không thể tự đình chỉ tài khoản của chính mình.
-                </div>
-              )}
-            </div>
+          {!isLocked ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={isSelf}
+              onClick={() => handleOpenStatusModal('LOCKED')}
+              className="h-9 gap-1.5 rounded-xl border-rose-500/30 text-rose-400 bg-rose-500/10 hover:bg-rose-500/20 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed font-bold"
+              title={isSelf ? 'Bạn không thể tự khoá tài khoản của chính mình' : undefined}
+            >
+              <UserX className="w-4 h-4" />
+              <span>Khoá tài khoản</span>
+            </Button>
           ) : (
             <Button
               type="button"
@@ -302,8 +315,8 @@ export default function AdminUserDetail() {
 
       {/* Main Grid: 2 Columns */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT COLUMN: Profile Info & Role Assignment (7 cols) */}
-        <div className="lg:col-span-7 space-y-6">
+        {/* LEFT COLUMN: Profile Info & Role Assignment */}
+        <div className="lg:col-span-5 space-y-6">
           {/* Profile Overview Card */}
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-5">
             <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2 border-b border-border/60 pb-3">
@@ -312,68 +325,33 @@ export default function AdminUserDetail() {
             </h2>
 
             <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 text-center sm:text-left">
-              {user.avatarUrl ? (
-                <img
-                  src={user.avatarUrl}
-                  alt={user.fullName}
-                  className="w-20 h-20 rounded-2xl object-cover border border-border/80 shadow-md shrink-0"
-                />
-              ) : (
-                <div className="w-20 h-20 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center font-black text-primary text-2xl shrink-0">
-                  {user.fullName.charAt(0)}
-                </div>
-              )}
+              <UserInitialsAvatar name={user.fullName} className="w-20 h-20 rounded-2xl text-2xl" />
 
               <div className="space-y-2 flex-1 min-w-0">
-                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <span className="text-lg font-black font-heading text-foreground">
-                    {user.fullName}
-                  </span>
-                  <span className="px-2.5 py-0.5 rounded-lg text-xs font-bold border uppercase tracking-wider bg-purple-500/15 text-purple-300 border-purple-500/30">
-                    <Sparkles className="w-3 h-3 inline mr-1" />
-                    {user.tier}
-                  </span>
-                </div>
+                <span className="text-lg font-black font-heading text-foreground block">{user.fullName}</span>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-secondary/30 p-3 rounded-xl border border-border/50">
+                <div className="grid grid-cols-1 gap-3 text-xs bg-secondary/30 p-3 rounded-xl border border-border/50 text-left">
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Email liên hệ:</span>
                     <span className="font-bold text-foreground block truncate">{user.email}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground block text-[11px]">Số điện thoại:</span>
-                    <span className="font-mono font-bold text-foreground block">{user.phone}</span>
+                    <span className="font-mono font-bold text-foreground block">{user.phone || '—'}</span>
                   </div>
                   <div>
-                    <span className="text-muted-foreground block text-[11px]">Ngày tham gia:</span>
-                    <span className="font-mono text-muted-foreground block">{user.joinedAt}</span>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground block text-[11px]">Lần đăng nhập cuối:</span>
-                    <span className="font-mono text-muted-foreground block">{user.lastLogin}</span>
+                    <span className="text-muted-foreground block text-[11px]">Ngày tạo tài khoản:</span>
+                    <span className="font-mono text-muted-foreground block">{formatDateTime(user.createdAt)}</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Metrics Chips */}
-            <div className="grid grid-cols-3 gap-3 border-t border-border/60 pt-4">
+            <div className="grid grid-cols-1 gap-3 border-t border-border/60 pt-4">
               <div className="p-3 rounded-xl bg-secondary/20 border border-border/50 text-center">
-                <span className="text-[11px] text-muted-foreground block">Điểm tích lũy</span>
+                <span className="text-[11px] text-muted-foreground block">Số đơn đặt vé</span>
                 <span className="text-base font-black font-heading font-mono text-foreground">
-                  {user.points.toLocaleString('vi-VN')}
-                </span>
-              </div>
-              <div className="p-3 rounded-xl bg-secondary/20 border border-border/50 text-center">
-                <span className="text-[11px] text-muted-foreground block">Tổng chi tiêu</span>
-                <span className="text-base font-black font-heading font-mono text-primary">
-                  {formatVND(user.totalSpent)}
-                </span>
-              </div>
-              <div className="p-3 rounded-xl bg-secondary/20 border border-border/50 text-center">
-                <span className="text-[11px] text-muted-foreground block">Số vé đã đặt</span>
-                <span className="text-base font-black font-heading font-mono text-foreground">
-                  {user.bookingCount} vé
+                  {bookingsLoading ? '…' : bookingsError ? '—' : `${bookingTotal} đơn`}
                 </span>
               </div>
             </div>
@@ -384,7 +362,7 @@ export default function AdminUserDetail() {
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-primary" />
-                <span>Phân quyền tài khoản (Role Assignment)</span>
+                <span>Phân quyền tài khoản</span>
               </h2>
 
               {!isEditingRoles ? (
@@ -414,7 +392,8 @@ export default function AdminUserDetail() {
                   <Button
                     type="button"
                     size="sm"
-                    onClick={handleSaveRoles}
+                    disabled={!rolesChanged}
+                    onClick={() => setShowRoleConfirmDialog(true)}
                     className="h-8 rounded-xl text-xs font-bold gap-1 cursor-pointer bg-primary text-primary-foreground shadow-xs"
                   >
                     <span>Lưu phân quyền</span>
@@ -423,9 +402,8 @@ export default function AdminUserDetail() {
               )}
             </div>
 
-            {/* Role Options */}
             <div className="space-y-3">
-              {/* ROLE_ADMIN Option */}
+              {/* ADMIN */}
               <div
                 className={cn(
                   'p-4 rounded-xl border transition-all',
@@ -437,9 +415,7 @@ export default function AdminUserDetail() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-foreground">
-                        ROLE_ADMIN (Quản trị viên)
-                      </span>
+                      <span className="text-xs font-bold text-foreground">ADMIN (Quản trị viên)</span>
                       {selectedRoles.includes('ADMIN') && (
                         <Badge variant="default" className="text-[10px]">
                           Đang cấp quyền
@@ -447,7 +423,7 @@ export default function AdminUserDetail() {
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Toàn quyền truy cập bảng điều khiển Admin Console: Quản lý phim, cụm rạp, phòng chiếu, sơ đồ ghế, suất chiếu, vé, thanh toán và người dùng.
+                      Toàn quyền truy cập trang quản trị: phim, rạp, phòng chiếu, suất chiếu, đơn đặt vé, thanh toán và người dùng.
                     </p>
                   </div>
 
@@ -456,8 +432,9 @@ export default function AdminUserDetail() {
                       <input
                         type="checkbox"
                         checked={selectedRoles.includes('ADMIN')}
-                        onChange={() => handleToggleRole('ADMIN')}
+                        onChange={handleToggleAdmin}
                         disabled={isSelf && selectedRoles.includes('ADMIN')}
+                        aria-label="Cấp quyền Quản trị viên"
                         className="w-4 h-4 rounded border-border accent-primary cursor-pointer disabled:cursor-not-allowed"
                         title={
                           isSelf && selectedRoles.includes('ADMIN')
@@ -469,71 +446,79 @@ export default function AdminUserDetail() {
                   )}
                 </div>
 
-                {/* Self Lockout Warning Callout */}
                 {isSelf && isEditingRoles && (
                   <div className="mt-3 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-400 flex items-center gap-2">
                     <ShieldAlert className="w-4 h-4 shrink-0" />
                     <span>
-                      Cơ chế bảo vệ: Không thể tự thu hồi quyền <strong>ROLE_ADMIN</strong> của chính tài khoản đang đăng nhập để tránh khóa hệ thống.
+                      Cơ chế bảo vệ: Không thể tự thu hồi quyền <strong>ADMIN</strong> của chính tài khoản đang đăng nhập.
                     </span>
                   </div>
                 )}
               </div>
 
-              {/* ROLE_USER Option */}
-              <div
-                className={cn(
-                  'p-4 rounded-xl border transition-all',
-                  selectedRoles.includes('USER')
-                    ? 'border-border/80 bg-secondary/30'
-                    : 'border-border/60 bg-secondary/10 opacity-70'
-                )}
-              >
+              {/* USER (luôn giữ) */}
+              <div className="p-4 rounded-xl border border-border/80 bg-secondary/30">
                 <div className="flex items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-foreground">
-                        ROLE_USER (Khách hàng tiêu chuẩn)
-                      </span>
-                      {selectedRoles.includes('USER') && (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Mặc định
-                        </Badge>
-                      )}
+                      <span className="text-xs font-bold text-foreground">USER (Khách hàng)</span>
+                      <Badge variant="secondary" className="text-[10px]">
+                        Luôn có
+                      </Badge>
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
-                      Quyền xem lịch chiếu phim, giữ chỗ chọn ghế, thanh toán trực tuyến, xem vé điện tử và quản lý hồ sơ cá nhân.
+                      Quyền xem lịch chiếu, giữ ghế, thanh toán, xem vé điện tử và quản lý hồ sơ cá nhân. Mọi tài khoản đều có vai trò này.
                     </p>
                   </div>
-
                   {isEditingRoles && (
                     <div className="shrink-0 pt-0.5">
                       <input
                         type="checkbox"
-                        checked={selectedRoles.includes('USER')}
-                        onChange={() => handleToggleRole('USER')}
-                        className="w-4 h-4 rounded border-border accent-primary cursor-pointer"
+                        checked
+                        disabled
+                        readOnly
+                        aria-label="Vai trò USER (luôn có)"
+                        className="w-4 h-4 rounded border-border accent-primary cursor-not-allowed"
                       />
                     </div>
                   )}
                 </div>
               </div>
+
+              <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                <span>Thay đổi vai trò có hiệu lực khi người dùng làm mới phiên đăng nhập (tối đa 15 phút).</span>
+              </p>
             </div>
           </div>
+        </div>
 
-          {/* Linked Bookings Recent Table */}
+        {/* RIGHT COLUMN: Recent bookings */}
+        <div className="lg:col-span-7 space-y-6">
           <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
             <div className="flex items-center justify-between border-b border-border/60 pb-3">
               <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <Ticket className="w-4 h-4 text-primary" />
-                <span>Đơn đặt vé gần đây của khách hàng</span>
+                <span>Đơn đặt vé gần đây</span>
               </h2>
               <span className="text-xs text-muted-foreground font-mono">
-                {user.recentBookings?.length || 0} đơn
+                {bookingsLoading ? '' : `${bookings.length}/${bookingTotal} đơn`}
               </span>
             </div>
 
-            {user.recentBookings && user.recentBookings.length > 0 ? (
+            {bookingsLoading ? (
+              <div className="space-y-2 animate-pulse">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-9 rounded-lg bg-secondary/30" />
+                ))}
+              </div>
+            ) : bookingsError ? (
+              <PageErrorState
+                title="Không thể tải đơn đặt vé"
+                message={bookingsError}
+                onRetry={() => void loadBookings()}
+              />
+            ) : bookings.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
@@ -543,26 +528,28 @@ export default function AdminUserDetail() {
                       <th className="py-2.5 px-3">Suất Chiếu</th>
                       <th className="py-2.5 px-3 text-right">Tổng Tiền</th>
                       <th className="py-2.5 px-3">Trạng Thái</th>
+                      <th className="py-2.5 px-3">Ngày Đặt</th>
                       <th className="py-2.5 pr-1 pl-3 text-center">Chi Tiết</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40">
-                    {user.recentBookings.map((b) => (
+                    {bookings.map((b) => (
                       <tr key={b.id} className="hover:bg-secondary/20 transition-colors">
-                        <td className="py-2.5 pl-1 pr-3 font-mono font-bold text-foreground">
-                          {b.bookingCode}
-                        </td>
+                        <td className="py-2.5 pl-1 pr-3 font-mono font-bold text-foreground">{b.bookingCode}</td>
                         <td className="py-2.5 px-3 font-medium text-foreground max-w-[140px] truncate">
-                          {b.movieTitle}
+                          {b.movieTitle || '—'}
                         </td>
                         <td className="py-2.5 px-3 text-muted-foreground font-mono text-[11px]">
-                          {b.showtime}
+                          {formatDateTime(b.showtimeStart)}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono font-bold text-foreground">
-                          {formatVND(b.finalTotal)}
+                          {formatVND(b.totalAmount)}
                         </td>
                         <td className="py-2.5 px-3">
                           <AdminStatusBadge status={b.status} size="sm" />
+                        </td>
+                        <td className="py-2.5 px-3 text-muted-foreground font-mono text-[11px]">
+                          {formatDateTime(b.createdAt)}
                         </td>
                         <td className="py-2.5 pr-1 pl-3 text-center">
                           <Button
@@ -589,62 +576,6 @@ export default function AdminUserDetail() {
             )}
           </div>
         </div>
-
-        {/* RIGHT COLUMN: Audit Trail (5 cols) */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Audit Trail Card */}
-          <div className="rounded-2xl border border-border/80 bg-card/60 backdrop-blur-md p-5 shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-border/60 pb-3">
-              <h2 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <History className="w-4 h-4 text-emerald-400" />
-                <span>Nhật ký kiểm toán (Audit Trail)</span>
-              </h2>
-              <span className="text-xs text-muted-foreground font-mono">
-                {user.auditLogs.length} sự kiện
-              </span>
-            </div>
-
-            {user.auditLogs.length > 0 ? (
-              <div className="relative pl-6 space-y-5 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-border/80">
-                {user.auditLogs.map((log) => (
-                  <div key={log.id} className="relative space-y-1">
-                    {/* Event dot */}
-                    <div className="absolute -left-6 top-1 w-5 h-5 rounded-full border-2 border-primary flex items-center justify-center bg-card">
-                      <div className="w-2 h-2 rounded-full bg-primary" />
-                    </div>
-
-                    <div className="flex flex-wrap items-center justify-between gap-1">
-                      <span className="text-xs font-bold text-foreground">
-                        {log.description}
-                      </span>
-                      <span className="text-[10px] font-mono text-muted-foreground">
-                        {log.timestamp}
-                      </span>
-                    </div>
-
-                    <div className="text-[11px] text-muted-foreground space-y-0.5">
-                      <div>
-                        Người thực hiện: <strong className="text-foreground">{log.actor}</strong>
-                      </div>
-                      <div className="font-mono text-[10px] bg-secondary/30 px-2 py-1 rounded border border-border/40">
-                        {log.previousValue} → <span className="text-primary font-bold">{log.newValue}</span>
-                      </div>
-                      {log.reason && (
-                        <div className="italic text-[11px] text-muted-foreground pt-0.5">
-                          Lý do: &quot;{log.reason}&quot;
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="py-8 text-center text-xs text-muted-foreground">
-                Tài khoản này chưa có ghi nhận thay đổi vai trò hoặc trạng thái nào.
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Role Change Confirmation Dialog */}
@@ -653,42 +584,36 @@ export default function AdminUserDetail() {
         title="Xác nhận thay đổi phân quyền"
         targetName={user.fullName}
         description={`Bạn chuẩn bị thay đổi vai trò của người dùng sang: [${selectedRoles.join(', ')}].`}
-        consequenceWarning="Thao tác này sẽ cập nhật trực tiếp quyền hạn truy cập của người dùng trong toàn bộ các microservices và được lưu vĩnh viễn vào nhật ký kiểm toán (Audit Trail)."
-        confirmText="Xác nhận cấp quyền"
+        consequenceWarning="Quyền mới có hiệu lực khi người dùng làm mới phiên đăng nhập (tối đa 15 phút); access token hiện tại vẫn giữ quyền cũ cho đến khi hết hạn."
+        confirmText="Xác nhận"
         cancelText="Hủy bỏ"
         variant="warning"
         isLoading={isUpdatingRole}
-        onConfirm={handleConfirmRoleChange}
-        onCancel={() => {
-          setShowRoleConfirmDialog(false)
-          setRoleReason('')
-        }}
+        onConfirm={() => void handleConfirmRoleChange()}
+        onCancel={() => setShowRoleConfirmDialog(false)}
       />
 
       {/* Status Change Confirmation Dialog */}
       <AdminConfirmDialog
         isOpen={showStatusDialog}
-        title={targetStatus === 'ACTIVE' ? 'Kích hoạt lại tài khoản' : 'Đình chỉ tài khoản'}
+        title={targetStatus === 'ACTIVE' ? 'Kích hoạt lại tài khoản' : 'Khoá tài khoản'}
         targetName={user.fullName}
         description={
           targetStatus === 'ACTIVE'
             ? 'Khôi phục trạng thái hoạt động bình thường cho tài khoản này.'
-            : 'Đình chỉ tài khoản này. Người dùng sẽ bị chặn đăng nhập và hủy các phiên làm việc hiện hành.'
+            : 'Khoá tài khoản này (LOCKED). Người dùng sẽ không thể đăng nhập.'
         }
         consequenceWarning={
-          targetStatus !== 'ACTIVE'
-            ? 'Mọi hành vi đăng nhập hoặc đặt vé từ tài khoản này sẽ bị từ chối ngay lập tức.'
+          targetStatus === 'LOCKED'
+            ? 'Mọi phiên đăng nhập hiện tại của người dùng sẽ bị thu hồi; access token đang dùng sẽ hết hạn trong tối đa 15 phút.'
             : undefined
         }
-        confirmText={targetStatus === 'ACTIVE' ? 'Kích hoạt lại' : 'Đình chỉ'}
+        confirmText={targetStatus === 'ACTIVE' ? 'Kích hoạt lại' : 'Khoá tài khoản'}
         cancelText="Đóng"
         variant={targetStatus === 'ACTIVE' ? 'default' : 'destructive'}
         isLoading={isUpdatingStatus}
-        onConfirm={handleConfirmStatusChange}
-        onCancel={() => {
-          setShowStatusDialog(false)
-          setStatusReason('')
-        }}
+        onConfirm={() => void handleConfirmStatusChange()}
+        onCancel={() => setShowStatusDialog(false)}
       />
     </div>
   )

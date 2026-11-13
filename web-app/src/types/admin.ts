@@ -29,7 +29,6 @@ export type AdminBookingStatusKey =
   | 'PENDING_PAYMENT'
   | 'CANCELLED'
   | 'EXPIRED'
-  | 'REFUND_PENDING'
 
 export interface BookingStatusBreakdown {
   status: AdminBookingStatusKey
@@ -52,17 +51,17 @@ export interface UpcomingShowtimeItem {
   startTime: string
   dateLabel: string
   soldSeats: number
-  totalSeats: number
-  occupancyRate: number
+  /** null khi không lấy được tổng số ghế của phòng */
+  totalSeats: number | null
+  /** 0..100, null khi không có tổng số ghế */
+  occupancyRate: number | null
   status: UpcomingShowtimeStatus
 }
 
 export type ActionRequiredType =
   | 'PAYMENT_FAILED'
-  | 'REFUND_PENDING'
+  | 'PENDING_PAYMENT'
   | 'NEARLY_SOLD_OUT'
-  | 'SERVICE_DEGRADED'
-  | 'DLT_RECORD'
 
 export interface ActionRequiredItem {
   id: string
@@ -91,11 +90,10 @@ export interface AdminActivityLogItem {
 export interface AdminDashboardData {
   period: AdminPeriod
   lastUpdated: string
-  isMock: boolean
   kpis: {
     revenue: AdminKPIItem
     bookings: AdminKPIItem
-    occupancyRate: AdminKPIItem
+    seatsSold: AdminKPIItem
     paymentSuccessRate: AdminKPIItem
   }
   trendPoints: RevenueTrendPoint[]

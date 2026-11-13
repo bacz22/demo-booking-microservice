@@ -35,7 +35,7 @@ import {
   mapBackendSeatsToAdminRows,
   type SeatGeneratePayload,
 } from '@/services/theater-api.service'
-import { calculateLayoutSummary } from '@/mocks/admin/seat-layouts'
+import { calculateLayoutSummary } from '@/lib/seat-layout'
 import { AdminSeatLegend } from '@/components/admin/seats/admin-seat-legend'
 import { AdminSeatItemComponent } from '@/components/admin/seats/admin-seat-item'
 import { SeatGeneratorModal } from '@/components/admin/seats/seat-generator-modal'
