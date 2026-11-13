@@ -31,9 +31,10 @@ import java.util.UUID;
 public class AuthService {
     public static final String ISSUER = "cinebook-auth";
 
-    public record UserView(UUID id, String email, String fullName, String phone, List<String> roles, Instant createdAt) {
+    public record UserView(UUID id, String email, String fullName, String phone, List<String> roles,
+                           String status, Instant createdAt) {
         static UserView from(User u) {
-            return new UserView(u.id(), u.email(), u.fullName(), u.phone(), u.roles(), u.createdAt());
+            return new UserView(u.id(), u.email(), u.fullName(), u.phone(), u.roles(), u.status(), u.createdAt());
         }
     }
 
@@ -101,6 +102,25 @@ public class AuthService {
 
     public UserView me(UUID userId) {
         return users.findById(userId).map(UserView::from).orElseThrow(AuthException::unauthenticated);
+    }
+
+    @Transactional
+    public UserView updateProfile(UUID userId, String fullName, String phone) {
+        users.findById(userId).orElseThrow(AuthException::unauthenticated);
+        users.updateProfile(userId, fullName.trim(), phone == null || phone.isBlank() ? null : phone.trim(), Instant.now(clock));
+        return me(userId);
+    }
+
+    /** Đổi mật khẩu thì thu hồi mọi refresh token: các thiết bị khác phải đăng nhập lại. */
+    @Transactional
+    public void changePassword(UUID userId, String currentPassword, String newPassword) {
+        User user = users.findById(userId).orElseThrow(AuthException::unauthenticated);
+        if (!passwordEncoder.matches(currentPassword, user.passwordHash())) {
+            throw new AuthException("INVALID_PASSWORD", "Mật khẩu hiện tại không đúng", org.springframework.http.HttpStatus.BAD_REQUEST);
+        }
+        Instant now = Instant.now(clock);
+        users.updatePassword(userId, passwordEncoder.encode(newPassword), now);
+        refreshTokens.revokeAllForUser(userId, now);
     }
 
     private TokenResponse issue(User user) {

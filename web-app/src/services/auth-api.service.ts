@@ -7,6 +7,7 @@ export interface BackendAuthUser {
   fullName: string
   phone: string | null
   roles: Array<'USER' | 'ADMIN'>
+  status?: 'ACTIVE' | 'LOCKED'
   createdAt: string
 }
 
@@ -35,6 +36,14 @@ class AuthApiService {
 
   me(): Promise<BackendAuthUser> {
     return apiClient.get<BackendAuthUser>(`${this.baseUrl}/me`)
+  }
+
+  updateProfile(data: { fullName: string; phone?: string }): Promise<BackendAuthUser> {
+    return apiClient.put<BackendAuthUser>(`${this.baseUrl}/me`, data)
+  }
+
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await apiClient.post<void>(`${this.baseUrl}/me/password`, { currentPassword, newPassword })
   }
 }
 

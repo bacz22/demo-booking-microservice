@@ -26,6 +26,7 @@ export interface BackendPaymentResponse {
   paidAt: string | null
   failedAt: string | null
   createdAt: string
+  updatedAt?: string
 }
 
 export interface CompletePaymentRequest {

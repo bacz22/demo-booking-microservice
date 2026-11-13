@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { Clock, Star, Film } from 'lucide-react'
 import { AgeRatingBadge } from '@/components/movie/age-rating-badge'
 import { ShowtimeButton } from '@/components/movie/showtime-button'
-import type { CinemaMovieSchedule } from '@/mocks/cinemas'
+import type { CinemaMovieSchedule } from '@/types/cinema'
 import type { ShowtimeItem } from '@/types/showtime'
 import { cn } from '@/lib/utils'
 

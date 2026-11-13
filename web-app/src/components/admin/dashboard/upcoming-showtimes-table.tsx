@@ -40,7 +40,7 @@ export function UpcomingShowtimesTable({ data, className }: UpcomingShowtimesTab
     } else if (sortField === 'movieTitle') {
       comparison = a.movieTitle.localeCompare(b.movieTitle)
     } else if (sortField === 'occupancyRate') {
-      comparison = a.occupancyRate - b.occupancyRate
+      comparison = (a.occupancyRate ?? -1) - (b.occupancyRate ?? -1)
     }
     return sortOrder === 'asc' ? comparison : -comparison
   })
@@ -59,7 +59,7 @@ export function UpcomingShowtimesTable({ data, className }: UpcomingShowtimesTab
             <span>Suất Chiếu Sắp Bắt Đầu</span>
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Lịch các suất chiếu diễn ra trong 2 giờ tới và tình trạng lấp đầy phòng chiếu
+            Các suất chiếu sắp diễn ra hôm nay và ngày mai cùng số ghế đã bán
           </p>
         </div>
 
@@ -142,6 +142,13 @@ export function UpcomingShowtimesTable({ data, className }: UpcomingShowtimesTab
           </thead>
 
           <tbody className="divide-y divide-border/40">
+            {sortedData.length === 0 && (
+              <tr>
+                <td colSpan={6} className="py-8 text-center text-xs text-muted-foreground">
+                  Không có suất chiếu nào sắp diễn ra.
+                </td>
+              </tr>
+            )}
             {sortedData.map((st) => (
               <tr key={st.id} className="hover:bg-secondary/30 transition-colors">
                 {/* Time & Date */}
@@ -176,39 +183,43 @@ export function UpcomingShowtimesTable({ data, className }: UpcomingShowtimesTab
 
                 {/* Occupancy Rate & Seats */}
                 <td className="py-3.5 px-3.5 min-w-[150px]">
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-mono font-bold text-foreground">
-                        {st.soldSeats}/{st.totalSeats} ghế
-                      </span>
-                      <span
-                        className={cn(
-                          'font-bold font-mono',
-                          st.occupancyRate >= 90
-                            ? 'text-rose-500'
-                            : st.occupancyRate >= 75
-                            ? 'text-amber-500'
-                            : 'text-emerald-500'
-                        )}
-                      >
-                        {st.occupancyRate.toFixed(1)}%
-                      </span>
-                    </div>
+                  {st.totalSeats !== null && st.occupancyRate !== null ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-mono font-bold text-foreground">
+                          {st.soldSeats}/{st.totalSeats} ghế
+                        </span>
+                        <span
+                          className={cn(
+                            'font-bold font-mono',
+                            st.occupancyRate >= 90
+                              ? 'text-rose-500'
+                              : st.occupancyRate >= 75
+                              ? 'text-amber-500'
+                              : 'text-emerald-500'
+                          )}
+                        >
+                          {st.occupancyRate.toFixed(1)}%
+                        </span>
+                      </div>
 
-                    <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className={cn(
-                          'h-full rounded-full transition-all duration-300',
-                          st.occupancyRate >= 90
-                            ? 'bg-rose-500'
-                            : st.occupancyRate >= 75
-                            ? 'bg-amber-500'
-                            : 'bg-emerald-500'
-                        )}
-                        style={{ width: `${st.occupancyRate}%` }}
-                      />
+                      <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                        <div
+                          className={cn(
+                            'h-full rounded-full',
+                            st.occupancyRate >= 90
+                              ? 'bg-rose-500'
+                              : st.occupancyRate >= 75
+                              ? 'bg-amber-500'
+                              : 'bg-emerald-500'
+                          )}
+                          style={{ width: `${Math.min(st.occupancyRate, 100)}%` }}
+                        />
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <span className="font-mono font-bold text-[11px] text-foreground">{st.soldSeats} ghế đã bán</span>
+                  )}
                 </td>
 
                 {/* Status */}

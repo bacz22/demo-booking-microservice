@@ -7,4 +7,6 @@ import java.util.UUID;
 
 public interface PaymentAttemptRepository extends JpaRepository<PaymentAttempt, UUID> {
     long countByPaymentId(UUID paymentId);
+
+    java.util.List<PaymentAttempt> findByPaymentIdOrderByAttemptNumber(UUID paymentId);
 }

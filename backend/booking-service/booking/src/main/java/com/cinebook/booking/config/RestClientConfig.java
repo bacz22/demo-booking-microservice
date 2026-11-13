@@ -31,4 +31,25 @@ public class RestClientConfig {
                 return execution.execute(request, body);
             }).build();
     }
+
+    /** movie-service: chỉ dùng để lấy tên phim/poster cho snapshot booking. */
+    @Bean
+    RestClient movieRestClient(
+        @Value("${booking.services.movie.url:http://localhost:8081}") String baseUrl,
+        @Value("${booking.services.movie.connect-timeout:2s}") Duration connectTimeout,
+        @Value("${booking.services.movie.read-timeout:3s}") Duration readTimeout,
+        @Value("${app.security.gateway-secret:}") String gatewaySecret) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeout);
+        factory.setReadTimeout(readTimeout);
+        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory)
+            .defaultHeader(GatewaySecretFilter.HEADER, gatewaySecret)
+            .requestInterceptor((request, body, execution) -> {
+                String correlationId = MDC.get("correlationId");
+                if (correlationId != null && !correlationId.isBlank()) {
+                    request.getHeaders().set(CorrelationIdFilter.HEADER, correlationId);
+                }
+                return execution.execute(request, body);
+            }).build();
+    }
 }

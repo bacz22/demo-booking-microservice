@@ -28,7 +28,7 @@ export function ActionRequiredCard({ items, className }: ActionRequiredCardProps
               <span>Vấn Đề Cần Xử Lý Ngay</span>
             </h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Cảnh báo giao dịch lỗi, yêu cầu hoàn tiền và tiến trình Kafka cần can thiệp
+              Giao dịch lỗi, đơn chờ thanh toán và suất chiếu sắp hết vé
             </p>
           </div>
 
@@ -43,6 +43,9 @@ export function ActionRequiredCard({ items, className }: ActionRequiredCardProps
 
         {/* Action Items List */}
         <div className="mt-4 space-y-3">
+          {items.length === 0 && (
+            <p className="py-6 text-center text-xs text-muted-foreground">Không có việc nào cần xử lý.</p>
+          )}
           {items.map((item) => (
             <div
               key={item.id}

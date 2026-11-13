@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,6 +36,11 @@ public class AuthController {
     public record LoginRequest(@NotBlank String email, @NotBlank String password) {}
 
     public record RefreshRequest(@NotBlank String refreshToken) {}
+
+    public record UpdateProfileRequest(@NotBlank @Size(max = 150) String fullName, @Size(max = 30) String phone) {}
+
+    public record ChangePasswordRequest(@NotBlank String currentPassword,
+                                        @NotBlank @Size(min = 6, max = 72) String newPassword) {}
 
     @PostMapping("/register")
     public ResponseEntity<TokenResponse> register(@Valid @RequestBody RegisterRequest r) {
@@ -61,5 +67,17 @@ public class AuthController {
     @GetMapping("/me")
     public UserView me(@RequestHeader("X-User-Id") UUID userId) {
         return auth.me(userId);
+    }
+
+    @PutMapping("/me")
+    public UserView updateMe(@RequestHeader("X-User-Id") UUID userId, @Valid @RequestBody UpdateProfileRequest r) {
+        return auth.updateProfile(userId, r.fullName(), r.phone());
+    }
+
+    @PostMapping("/me/password")
+    public ResponseEntity<Void> changePassword(@RequestHeader("X-User-Id") UUID userId,
+                                               @Valid @RequestBody ChangePasswordRequest r) {
+        auth.changePassword(userId, r.currentPassword(), r.newPassword());
+        return ResponseEntity.noContent().build();
     }
 }

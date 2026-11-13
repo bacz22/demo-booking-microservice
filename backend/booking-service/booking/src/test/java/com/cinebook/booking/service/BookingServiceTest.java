@@ -1,5 +1,6 @@
 package com.cinebook.booking.service;
 
+import com.cinebook.booking.client.MovieServiceClient;
 import com.cinebook.booking.client.TheaterServiceClient;
 import com.cinebook.booking.client.dto.TheaterSeatDto;
 import com.cinebook.booking.client.dto.TheaterSeatMapDto;
@@ -51,6 +52,7 @@ class BookingServiceTest {
 
     @Mock BookingPersistenceService persistence;
     @Mock TheaterServiceClient theater;
+    @Mock MovieServiceClient movies;
     @Mock RedisSeatHoldRepository seatHolds;
     @Mock RedisIdempotencyRepository idempotency;
     @Mock BookingMetrics metrics;
@@ -59,7 +61,7 @@ class BookingServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new BookingService(persistence, theater, seatHolds, idempotency, metrics,
+        service = new BookingService(persistence, theater, movies, seatHolds, idempotency, metrics,
             Clock.fixed(NOW, ZoneOffset.UTC), 8, 300, true);
     }
 

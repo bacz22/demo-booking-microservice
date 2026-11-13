@@ -13,7 +13,8 @@ import java.util.Optional;
 import java.util.List;
 import java.util.UUID;
 
-public interface BookingRepository extends JpaRepository<Booking, UUID> {
+public interface BookingRepository extends JpaRepository<Booking, UUID>,
+        org.springframework.data.jpa.repository.JpaSpecificationExecutor<Booking> {
     Optional<Booking> findByRequestId(UUID requestId);
     Page<Booking> findByUserIdOrderByCreatedAtDesc(UUID userId, Pageable pageable);
 

@@ -14,6 +14,9 @@ import java.util.UUID;
 public interface BookingSeatRepository extends JpaRepository<BookingSeat, UUID> {
     List<BookingSeat> findByBookingIdOrderBySeatNumber(UUID bookingId);
 
+    /** Lấy ghế cho cả trang booking admin trong một query. */
+    List<BookingSeat> findByBookingIdIn(java.util.Collection<UUID> bookingIds);
+
     @Query(value = """
         select bs.seat_id, bs.status, b.user_id, b.expires_at
         from booking_seats bs join bookings b on b.id = bs.booking_id

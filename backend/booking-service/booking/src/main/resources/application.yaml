@@ -96,6 +96,10 @@ booking:
     fixed-delay-ms: ${BOOKING_EXPIRATION_FIXED_DELAY_MS:30000}
     batch-size: ${BOOKING_EXPIRATION_BATCH_SIZE:100}
   services:
+    movie:
+      url: ${MOVIE_SERVICE_URL:http://localhost:8081}
+      connect-timeout: ${MOVIE_CONNECT_TIMEOUT:2s}
+      read-timeout: ${MOVIE_READ_TIMEOUT:3s}
     theater:
       url: ${THEATER_SERVICE_URL:http://localhost:8082}
       connect-timeout: ${THEATER_CONNECT_TIMEOUT:3s}

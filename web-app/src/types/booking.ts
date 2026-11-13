@@ -58,6 +58,16 @@ export interface BackendBookingResponse {
   cancelReason?: string | null
   createdAt: string
   seats: BackendBookingSeatResponse[]
+  paymentId?: string | null
+  updatedAt?: string
+  // Snapshot lúc giữ ghế (null với booking cũ chưa được backfill)
+  movieTitle?: string | null
+  posterUrl?: string | null
+  theaterName?: string | null
+  theaterCity?: string | null
+  auditoriumName?: string | null
+  showtimeStart?: string | null
+  showtimeEnd?: string | null
 }
 
 export interface BackendSeatStatusDto {
