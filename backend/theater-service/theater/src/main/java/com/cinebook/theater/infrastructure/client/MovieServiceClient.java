@@ -72,4 +72,20 @@ public class MovieServiceClient {
 
         return movie;
     }
+
+    /** Trang phim của movie-service (chỉ cần content). */
+    public record MoviePage(java.util.List<MovieSummaryResponse> content) {}
+
+    /** Danh sách phim đang chiếu, dùng cho dữ liệu demo. Lỗi kết nối trả danh sách rỗng. */
+    public java.util.List<MovieSummaryResponse> listNowShowing(int limit) {
+        try {
+            MoviePage page = restClient.get()
+                .uri(uri -> uri.path("/api/movies").queryParam("status", "NOW_SHOWING").queryParam("size", limit).build())
+                .retrieve().body(MoviePage.class);
+            return page == null || page.content() == null ? java.util.List.of() : page.content();
+        } catch (Exception e) {
+            log.warn("Không lấy được danh sách phim đang chiếu: {}", e.getMessage());
+            return java.util.List.of();
+        }
+    }
 }

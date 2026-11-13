@@ -1,0 +1,18 @@
+meta {
+  name: Thông báo của tôi
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/notifications/me?page=0&pageSize=5
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+tests {
+  test("có thông báo", () => expect(res.body.content.length).to.be.above(0));
+}

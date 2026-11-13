@@ -1,0 +1,14 @@
+meta {
+  name: Không có token bị chặn
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/bookings/me
+  auth: none
+}
+
+tests {
+  test("401 UNAUTHENTICATED", () => expect(res.status).to.equal(401));
+}

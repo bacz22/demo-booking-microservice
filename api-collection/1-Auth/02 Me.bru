@@ -1,0 +1,18 @@
+meta {
+  name: Thông tin của tôi
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/auth/me
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+tests {
+  test("là user demo", () => expect(res.body.email).to.equal("demo@cinebook.vn"));
+}

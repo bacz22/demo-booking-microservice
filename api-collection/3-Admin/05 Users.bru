@@ -1,0 +1,18 @@
+meta {
+  name: Người dùng
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{baseUrl}}/admin/users?page=0&pageSize=10
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+tests {
+  test("có user", () => expect(res.body.total).to.be.above(0));
+}

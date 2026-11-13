@@ -40,9 +40,10 @@ export default function PaymentFailedPage() {
 
 
 
-  // Xử lý nút Thử lại: quay lại trang Checkout hoặc chọn lại
+  // Đơn cũ đã bị huỷ/hoàn tiền nên không quay lại checkout được: về chọn ghế của suất chiếu để đặt lại
   const handleRetry = () => {
-    navigate(-1)
+    const showtimeId = (location.state as { showtimeId?: string } | null)?.showtimeId
+    navigate(showtimeId ? `/booking/${showtimeId}/seats` : '/cinemas')
   }
 
   return (
@@ -130,7 +131,7 @@ export default function PaymentFailedPage() {
           className="w-full sm:w-auto font-bold px-8 shadow-lg shadow-primary/20"
         >
           <RotateCcw className="h-4 w-4" aria-hidden="true" />
-          <span>Thử lại</span>
+          <span>Chọn lại ghế</span>
         </Button>
 
         {/* Nút Quay lại */}

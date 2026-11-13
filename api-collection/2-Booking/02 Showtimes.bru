@@ -1,0 +1,27 @@
+meta {
+  name: Suất chiếu của phim
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/movies/{{movieId}}/showtimes
+  auth: none
+}
+
+script:post-response {
+  // Tìm suất chiếu đầu tiên trong cấu trúc nhóm theo ngày/rạp
+  const find = (o) => {
+    if (Array.isArray(o)) { for (const x of o) { const r = find(x); if (r) return r; } }
+    else if (o && typeof o === "object") {
+      if (o.id && o.startTime) return o.id;
+      for (const k of Object.keys(o)) { const r = find(o[k]); if (r) return r; }
+    }
+    return null;
+  };
+  bru.setVar("showtimeId", find(res.body));
+}
+
+tests {
+  test("có suất chiếu (cần DEMO_SEED=true)", () => expect(bru.getVar("showtimeId")).to.be.a("string"));
+}

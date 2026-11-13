@@ -1,0 +1,18 @@
+meta {
+  name: Tổng hợp thanh toán
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{baseUrl}}/admin/payments/summary?from={{statsFrom}}&to={{statsTo}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+tests {
+  test("200", () => expect(res.status).to.equal(200));
+}

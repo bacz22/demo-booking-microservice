@@ -1,0 +1,23 @@
+meta {
+  name: Sơ đồ ghế
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/bookings/showtimes/{{showtimeId}}/seats
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:post-response {
+  const free = res.body.seats.find((s) => s.status === "AVAILABLE");
+  bru.setVar("seatId", free ? free.seatId : null);
+}
+
+tests {
+  test("còn ghế trống", () => expect(bru.getVar("seatId")).to.be.a("string"));
+}

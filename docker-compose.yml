@@ -1,0 +1,250 @@
+# CineBook – chạy toàn bộ hệ thống bằng một lệnh:
+#   cp .env.example .env
+#   docker compose up -d --build
+# Web: http://localhost:3000 · API Gateway: http://localhost:8080
+# Kafka UI (tuỳ chọn): docker compose --profile tools up -d kafka-ui → http://localhost:8090
+#
+# Khi dev bằng IDE thì chỉ chạy hạ tầng: docker compose -f backend/infra/docker-compose.yml up -d
+name: cinebook
+
+x-postgres: &postgres
+  image: postgres:16-alpine
+  restart: unless-stopped
+  environment: &pg-env
+    POSTGRES_USER: cinebook
+    POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+  mem_limit: 256m
+  networks: [cinebook]
+
+x-java-service: &java-service
+  restart: unless-stopped
+  mem_limit: 512m
+  networks: [cinebook]
+
+x-java-env: &java-env
+  DB_PORT: "5432"
+  DB_USERNAME: cinebook
+  DB_PASSWORD: ${DB_PASSWORD:-123456}
+  DB_POOL_MAX_SIZE: "5"
+  DB_POOL_MIN_IDLE: "1"
+  KAFKA_BOOTSTRAP_SERVERS: kafka:19092
+  GATEWAY_SECRET: ${GATEWAY_SECRET:?Thiếu GATEWAY_SECRET trong .env}
+
+services:
+  # ---------------------------------------------------------------- hạ tầng
+  postgres-movie:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: movie_db }
+    volumes: [postgres_movie_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d movie_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  postgres-theater:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: theater_db }
+    volumes: [postgres_theater_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d theater_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  postgres-booking:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: booking_db }
+    volumes: [postgres_booking_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d booking_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  postgres-payment:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: payment_db }
+    volumes: [postgres_payment_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d payment_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  postgres-notification:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: notification_db }
+    volumes: [postgres_notification_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d notification_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  postgres-auth:
+    <<: *postgres
+    environment: { <<: *pg-env, POSTGRES_DB: auth_db }
+    volumes: [postgres_auth_data:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U cinebook -d auth_db"], interval: 5s, timeout: 5s, retries: 20 }
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 128mb
+    mem_limit: 192m
+    volumes: [redis_data:/data]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20 }
+    networks: [cinebook]
+
+  kafka:
+    image: apache/kafka:3.9.2
+    hostname: kafka
+    restart: unless-stopped
+    mem_limit: 768m
+    # Không mở cổng ra host (tránh trùng với Kafka của backend/infra khi dev); service dùng kafka:19092 nội bộ
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: CONTROLLER://:29093,PLAINTEXT://:19092,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:19092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+    volumes: [kafka_data:/var/lib/kafka/data]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    networks: [cinebook]
+
+  kafka-init:
+    image: apache/kafka:3.9.2
+    depends_on: { kafka: { condition: service_healthy } }
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - >-
+        for t in booking.events payment.events showtime.events notification.commands booking.events.DLT payment.events.DLT;
+        do /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --create --if-not-exists --topic $$t --partitions 3 --replication-factor 1;
+        done; echo 'Kafka topics initialized.'
+    restart: "no"
+    networks: [cinebook]
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    profiles: [tools]
+    depends_on: { kafka: { condition: service_healthy } }
+    ports: ["8090:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: cinebook
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+    networks: [cinebook]
+
+  # ---------------------------------------------------------------- services
+  auth-service:
+    <<: *java-service
+    build: ./backend/auth-service/auth
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-auth
+      DB_NAME: auth_db
+      AUTH_SEED_ENABLED: ${DEMO_SEED:-true}
+      AUTH_DEMO_PASSWORD: ${AUTH_DEMO_PASSWORD:-Demo@123}
+      AUTH_ADMIN_PASSWORD: ${AUTH_ADMIN_PASSWORD:-Admin@123}
+    depends_on: { postgres-auth: { condition: service_healthy } }
+
+  movie-service:
+    <<: *java-service
+    build: ./backend/movie-service/movie
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-movie
+      DB_NAME: movie_db
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
+    depends_on: { postgres-movie: { condition: service_healthy } }
+
+  theater-service:
+    <<: *java-service
+    build: ./backend/theater-service/theater
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-theater
+      DB_NAME: theater_db
+      MOVIE_SERVICE_URL: http://movie-service:8081
+      DEMO_SEED: ${DEMO_SEED:-true}
+    depends_on:
+      postgres-theater: { condition: service_healthy }
+      movie-service: { condition: service_healthy }
+
+  booking-service:
+    <<: *java-service
+    build: ./backend/booking-service/booking
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-booking
+      DB_NAME: booking_db
+      REDIS_HOST: redis
+      THEATER_SERVICE_URL: http://theater-service:8082
+      MOVIE_SERVICE_URL: http://movie-service:8081
+      BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:?Thiếu BOOKING_SERVICE_KEY trong .env}
+    depends_on:
+      postgres-booking: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+      theater-service: { condition: service_healthy }
+
+  payment-service:
+    <<: *java-service
+    build: ./backend/payment-service/payment
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-payment
+      DB_NAME: payment_db
+      BOOKING_SERVICE_URL: http://booking-service:8083
+      BOOKING_SERVICE_KEY: ${BOOKING_SERVICE_KEY:?Thiếu BOOKING_SERVICE_KEY trong .env}
+    depends_on:
+      postgres-payment: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  notification-service:
+    <<: *java-service
+    build: ./backend/notification-service/notification
+    environment:
+      <<: *java-env
+      DB_HOST: postgres-notification
+      DB_NAME: notification_db
+    depends_on:
+      postgres-notification: { condition: service_healthy }
+      kafka-init: { condition: service_completed_successfully }
+
+  api-gateway:
+    <<: *java-service
+    build: ./backend/api-gateway/gateway
+    mem_limit: 384m
+    ports: ["8080:8080"]
+    environment:
+      GATEWAY_SECRET: ${GATEWAY_SECRET:?Thiếu GATEWAY_SECRET trong .env}
+      AUTH_SERVICE_URL: http://auth-service:8086
+      AUTH_JWKS_URI: http://auth-service:8086/.well-known/jwks.json
+      MOVIE_SERVICE_URL: http://movie-service:8081
+      THEATER_SERVICE_URL: http://theater-service:8082
+      BOOKING_SERVICE_URL: http://booking-service:8083
+      PAYMENT_SERVICE_URL: http://payment-service:8084
+      NOTIFICATION_SERVICE_URL: http://notification-service:8085
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:5173
+    depends_on:
+      auth-service: { condition: service_healthy }
+
+  web:
+    build: ./web-app
+    restart: unless-stopped
+    mem_limit: 64m
+    ports: ["3000:80"]
+    depends_on: { api-gateway: { condition: service_healthy } }
+    networks: [cinebook]
+
+volumes:
+  postgres_movie_data:
+  postgres_theater_data:
+  postgres_booking_data:
+  postgres_payment_data:
+  postgres_notification_data:
+  postgres_auth_data:
+  redis_data:
+  kafka_data:
+
+networks:
+  cinebook:

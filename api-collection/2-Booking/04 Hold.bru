@@ -1,0 +1,32 @@
+meta {
+  name: Giữ ghế
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/bookings/hold
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  req.setHeader("Idempotency-Key", require("crypto").randomUUID());
+}
+
+body:json {
+  { "showtimeId": "{{showtimeId}}", "seatIds": ["{{seatId}}"] }
+}
+
+script:post-response {
+  bru.setVar("bookingId", res.body.id);
+  bru.setVar("bookingAmount", res.body.totalAmount);
+}
+
+tests {
+  test("đơn PENDING_PAYMENT", () => expect(res.body.status).to.equal("PENDING_PAYMENT"));
+}

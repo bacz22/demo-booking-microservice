@@ -1,0 +1,23 @@
+meta {
+  name: Cổng thanh toán báo thành công
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/payments/{{paymentId}}/complete
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+body:json {
+  { "success": true, "providerRef": "BRUNO-TEST" }
+}
+
+tests {
+  test("đang chờ Saga xác nhận", () => expect(res.body.status).to.be.oneOf(["PROCESSING", "SUCCEEDED"]));
+}

@@ -35,10 +35,11 @@ spring:
       max-file-size: ${MULTIPART_MAX_FILE_SIZE:100MB}
       max-request-size: ${MULTIPART_MAX_REQUEST_SIZE:100MB}
 
+# Upload ảnh/video cho admin. Đặt trong .env (không commit); để trống thì chỉ tính năng upload bị tắt.
 cloudinary:
-  cloud-name: ${CLOUDINARY_CLOUD_NAME:dusx4ymdy}
-  api-key: ${CLOUDINARY_API_KEY:458343336469922}
-  api-secret: ${CLOUDINARY_API_SECRET:dWGPXlmWLzOB88F-6A6Zb3ik5_k}
+  cloud-name: ${CLOUDINARY_CLOUD_NAME:}
+  api-key: ${CLOUDINARY_API_KEY:}
+  api-secret: ${CLOUDINARY_API_SECRET:}
   folder: ${CLOUDINARY_FOLDER:cinebook}
 
 server:

@@ -1,0 +1,24 @@
+meta {
+  name: Refresh token (rotation)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/auth/refresh
+  body: json
+  auth: none
+}
+
+body:json {
+  { "refreshToken": "{{refreshToken}}" }
+}
+
+script:post-response {
+  bru.setVar("accessToken", res.body.accessToken);
+  bru.setVar("refreshToken", res.body.refreshToken);
+}
+
+tests {
+  test("cấp token mới", () => expect(res.status).to.equal(200));
+}

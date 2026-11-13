@@ -4,6 +4,12 @@ import { Button } from '@/components/ui/button'
 import { AgeRatingBadge } from '@/components/movie/age-rating-badge'
 import { formatPrice, cn } from '@/lib/utils'
 
+export interface SeatPriceLine {
+  label: string
+  count: number
+  price: number
+}
+
 export interface BookingSummaryCardProps {
   /** Ảnh poster thumbnail */
   posterUrl: string
@@ -19,8 +25,10 @@ export interface BookingSummaryCardProps {
   showtime: string
   /** Danh sách ghế đã chọn */
   seats: string[]
-  /** Đơn giá vé tham chiếu */
+  /** Đơn giá vé tham chiếu (chỉ dùng khi không có priceLines) */
   ticketPrice?: number
+  /** Đơn giá theo từng loại ghế đã chọn, ví dụ [{ label: 'Ghế VIP', count: 1, price: 110000 }] */
+  priceLines?: SeatPriceLine[]
   /** Tạm tính tiền vé (Subtotal) */
   subtotal?: number
   /** Phí dịch vụ */
@@ -51,6 +59,7 @@ export function BookingSummaryCard({
   showtime,
   seats = [],
   ticketPrice,
+  priceLines,
   subtotal,
   serviceFee = 0,
   total,
@@ -174,12 +183,22 @@ export function BookingSummaryCard({
 
       {/* 3. Bảng phân tích chi phí: Ticket Price, Subtotal, Service Fee, Total */}
       <div className="space-y-2 p-4 sm:p-5 text-xs sm:text-sm bg-secondary/20">
-        {ticketPrice !== undefined && ticketPrice > 0 && (
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span>Đơn giá vé</span>
-            <span>{formatPrice(ticketPrice)}</span>
-          </div>
-        )}
+        {priceLines && priceLines.length > 0
+          ? priceLines.map((line) => (
+              <div key={line.label} className="flex items-center justify-between text-muted-foreground">
+                <span>
+                  {line.label} × {line.count}
+                </span>
+                <span>{formatPrice(line.price)}/vé</span>
+              </div>
+            ))
+          : ticketPrice !== undefined &&
+            ticketPrice > 0 && (
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>Đơn giá vé</span>
+                <span>{formatPrice(ticketPrice)}</span>
+              </div>
+            )}
 
         {/* Tạm tính (Subtotal) nếu có phân tách phí */}
         {subtotal !== undefined && (

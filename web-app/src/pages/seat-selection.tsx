@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/empty-state'
 import { toast } from '@/lib/toast'
+import { seatPriceLines } from '@/lib/seat-price-lines'
 import { formatPrice } from '@/lib/utils'
 import type { SeatItem, SeatRow, SeatType, SeatStatus } from '@/types/seat'
 import type { Movie } from '@/types/movie'
@@ -474,6 +475,7 @@ export default function SeatSelectionPage() {
             showtime={endTime ? `${startTime} - ${endTime}` : startTime}
             seats={selectedSeats}
             ticketPrice={legendPrices.standard}
+            priceLines={seatPriceLines(selectedSeatObjects)}
             total={totalPrice}
             onContinue={handleContinue}
             continueDisabled={selectedSeats.length === 0 || isHolding}

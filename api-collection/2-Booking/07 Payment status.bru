@@ -1,0 +1,23 @@
+meta {
+  name: Trạng thái payment sau Saga
+  type: http
+  seq: 7
+}
+
+get {
+  url: {{baseUrl}}/payments/{{paymentId}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  // Saga đi qua Kafka (outbox poll ~0,5s mỗi chiều) nên đợi một chút
+  await new Promise((r) => setTimeout(r, 3000));
+}
+
+tests {
+  test("SUCCEEDED", () => expect(res.body.status).to.equal("SUCCEEDED"));
+}

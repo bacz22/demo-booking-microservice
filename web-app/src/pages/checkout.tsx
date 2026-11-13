@@ -10,6 +10,7 @@ import { FormField } from '@/components/ui/form-field'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils'
+import { seatPriceLines } from '@/lib/seat-price-lines'
 import { toast } from '@/lib/toast'
 import { useAuth } from '@/context/auth-context'
 import { bookingApiService, generateIdempotencyKey } from '@/services/booking-api.service'
@@ -143,6 +144,7 @@ export default function CheckoutPage() {
         movie: bookingData.movieTitle,
         cinema: bookingData.cinemaName,
         total: bookingData.total,
+        showtimeId: state?.showtimeId,
         reason,
         ...extra,
       },
@@ -491,6 +493,7 @@ export default function CheckoutPage() {
             showtime={bookingData.showtime}
             seats={bookingData.seats}
             ticketPrice={bookingData.seats.length > 0 ? Math.round(bookingData.total / bookingData.seats.length) : undefined}
+            priceLines={seatPriceLines(state?.booking?.seats ?? [])}
             subtotal={bookingData.subtotal}
             serviceFee={bookingData.serviceFee}
             total={bookingData.total}
