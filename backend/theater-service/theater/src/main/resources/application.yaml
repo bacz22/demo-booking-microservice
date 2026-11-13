@@ -58,3 +58,8 @@ app:
   security:
     # Phải khớp api-gateway; để trống = tắt kiểm tra.
     gateway-secret: ${GATEWAY_SECRET:local-dev-gateway-secret}
+  # Tự tạo suất chiếu đang mở bán cho N ngày tới (dữ liệu demo). Tắt mặc định khi dev bằng IDE.
+  demo-seed:
+    enabled: ${DEMO_SEED:false}
+    days: ${DEMO_SEED_DAYS:7}
+    max-auditoriums: ${DEMO_SEED_MAX_AUDITORIUMS:6}

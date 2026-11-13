@@ -43,11 +43,37 @@ class AdminBookingServiceTest {
     @Autowired BookingService bookingService;
     @Autowired BookingPersistenceService persistence;
     @Autowired JdbcTemplate jdbc;
+    @Autowired com.cinebook.booking.client.MovieServiceClient movies;
     @MockitoBean TheaterServiceClient theater;
     @MockitoBean RedisSeatHoldRepository seatHolds;
 
+    /** movie-service giả: trả phim cho mọi id và đếm số lần bị gọi. */
+    private static final java.util.concurrent.atomic.AtomicInteger MOVIE_CALLS = new java.util.concurrent.atomic.AtomicInteger();
+    private static final com.sun.net.httpserver.HttpServer MOVIE_STUB = startMovieStub();
+
+    private static com.sun.net.httpserver.HttpServer startMovieStub() {
+        try {
+            var server = com.sun.net.httpserver.HttpServer.create(new java.net.InetSocketAddress("localhost", 0), 0);
+            server.createContext("/api/movies/", exchange -> {
+                MOVIE_CALLS.incrementAndGet();
+                String id = exchange.getRequestURI().getPath().substring("/api/movies/".length());
+                byte[] body = ("{\"id\":\"" + id + "\",\"title\":\"Dune\",\"posterUrl\":\"https://img/p.jpg\",\"durationMin\":166}")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "application/json");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+                exchange.close();
+            });
+            server.start();
+            return server;
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     @DynamicPropertySource
     static void registerPostgresProperties(DynamicPropertyRegistry registry) {
+        registry.add("booking.services.movie.url", () -> "http://localhost:" + MOVIE_STUB.getAddress().getPort());
         POSTGRES.start();
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", POSTGRES::getUsername);
@@ -55,7 +81,10 @@ class AdminBookingServiceTest {
     }
 
     @AfterAll
-    static void stop() { POSTGRES.stop(); }
+    static void stop() {
+        POSTGRES.stop();
+        MOVIE_STUB.stop(0);
+    }
 
     @BeforeEach
     void clean() {
@@ -144,6 +173,18 @@ class AdminBookingServiceTest {
         persistence.confirmWithPayment(new PaymentConfirmationCommand(paid.getId(), paid.getUserId(),
             UUID.randomUUID(), paid.getTotalAmount(), "VND"));
         assertThrows(InvalidBookingStateException.class, () -> bookingService.adminCancel(paid.getId(), null));
+    }
+
+    /** Hồi quy: điều kiện cache sai từng làm mọi lần giữ ghế lỗi 500 (SpEL gọi isEmpty() trên DTO). */
+    @Test
+    void movieLookup_goesThroughCacheProxy_andCachesSuccessfulResult() {
+        UUID movieId = UUID.randomUUID();
+        int before = MOVIE_CALLS.get();
+
+        assertEquals("Dune", movies.findMovie(movieId).orElseThrow().title());
+        assertEquals("Dune", movies.findMovie(movieId).orElseThrow().title());
+
+        assertEquals(1, MOVIE_CALLS.get() - before, "lần gọi thứ hai phải lấy từ cache");
     }
 
     // ---------- helpers ----------

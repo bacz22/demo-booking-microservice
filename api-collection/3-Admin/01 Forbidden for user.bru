@@ -1,0 +1,18 @@
+meta {
+  name: User thường bị chặn ở API admin
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/admin/bookings
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+tests {
+  test("403", () => expect(res.status).to.equal(403));
+}

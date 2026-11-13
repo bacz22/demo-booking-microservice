@@ -1,0 +1,32 @@
+meta {
+  name: Tạo payment
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/payments
+  body: json
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{accessToken}}
+}
+
+script:pre-request {
+  req.setHeader("Idempotency-Key", require("crypto").randomUUID());
+  req.setBody({ bookingId: bru.getVar("bookingId"), amount: bru.getVar("bookingAmount"), currency: "VND", method: "MOCK" });
+}
+
+body:json {
+  {}
+}
+
+script:post-response {
+  bru.setVar("paymentId", res.body.id);
+}
+
+tests {
+  test("payment được tạo", () => expect(res.status).to.be.oneOf([200, 201]));
+}

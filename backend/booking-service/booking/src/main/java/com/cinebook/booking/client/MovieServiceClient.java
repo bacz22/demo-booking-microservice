@@ -25,7 +25,8 @@ public class MovieServiceClient {
         this.restClient = movieRestClient;
     }
 
-    @Cacheable(cacheNames = "movieSummaries", key = "#movieId", unless = "#result == null || #result.isEmpty()")
+    // Spring Cache tự mở Optional: #result là MovieSummaryDto (null khi Optional rỗng) → không cache lần lỗi.
+    @Cacheable(cacheNames = "movieSummaries", key = "#movieId", unless = "#result == null")
     public Optional<MovieSummaryDto> findMovie(UUID movieId) {
         try {
             return Optional.ofNullable(restClient.get().uri("/api/movies/{id}", movieId)

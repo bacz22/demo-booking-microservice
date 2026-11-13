@@ -1,0 +1,23 @@
+meta {
+  name: Đăng nhập admin
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  { "email": "{{adminEmail}}", "password": "{{adminPassword}}" }
+}
+
+script:post-response {
+  bru.setVar("adminToken", res.body.accessToken);
+}
+
+tests {
+  test("có quyền ADMIN", () => expect(res.body.user.roles).to.include("ADMIN"));
+}

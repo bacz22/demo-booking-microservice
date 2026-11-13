@@ -1,0 +1,19 @@
+meta {
+  name: Phim đang chiếu
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/movies?status=NOW_SHOWING&size=20
+  auth: none
+}
+
+script:post-response {
+  bru.setVar("movieIds", JSON.stringify(res.body.content.map((m) => m.id)));
+  bru.setVar("movieId", res.body.content[0].id);
+}
+
+tests {
+  test("có phim", () => expect(res.body.content.length).to.be.above(0));
+}

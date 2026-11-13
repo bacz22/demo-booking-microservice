@@ -30,6 +30,7 @@ export function SeatSelectionSummary({
   seats = selectedSeats || [],
   prices,
   ticketPrice = prices?.standard || 75000,
+  priceLines,
   total = 0,
   onContinue,
   continueDisabled,
@@ -45,6 +46,7 @@ export function SeatSelectionSummary({
       showtime={showtime}
       seats={seats}
       ticketPrice={ticketPrice}
+      priceLines={priceLines}
       total={total}
       onContinue={onContinue}
       continueDisabled={continueDisabled}

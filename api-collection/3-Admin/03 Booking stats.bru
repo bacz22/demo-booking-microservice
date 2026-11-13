@@ -1,0 +1,24 @@
+meta {
+  name: Thống kê 7 ngày
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/admin/bookings/stats?from={{statsFrom}}&to={{statsTo}}
+  auth: bearer
+}
+
+auth:bearer {
+  token: {{adminToken}}
+}
+
+script:pre-request {
+  const vn = (d) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(d);
+  bru.setVar("statsTo", vn(new Date()));
+  bru.setVar("statsFrom", vn(new Date(Date.now() - 6 * 86400000)));
+}
+
+tests {
+  test("7 điểm dữ liệu", () => expect(res.body.daily.length).to.equal(7));
+}

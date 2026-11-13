@@ -5,9 +5,21 @@
 !/backend/**
 !/web-app/
 !/web-app/**
+# Phát hành: chạy cả hệ thống bằng một lệnh + tài liệu
+!/README.md
+!/docker-compose.yml
+!/.env.example
+!/api-collection/
+!/api-collection/**
+!/docs/
+/docs/*
+!/docs/events.md
+!/docs/demo-script.md
 
 # Generated files and local tooling data.
 **/target/
+**/hs_err_pid*.log
+**/replay_pid*.log
 **/node_modules/
 **/.idea/
 **/*.iml
